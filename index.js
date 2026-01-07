@@ -7,6 +7,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+
+app.get('/', (req, res) => {
+  res.send('API is running');
+});
+
 // Connect to Railway MySQL using environment variables
 const pool = mysql.createPool({
   host: process.env.MYSQLHOST,
