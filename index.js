@@ -7,7 +7,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-
+// A simple page so your browser shows something at the root URL
 app.get('/', (req, res) => {
   res.send('API is running');
 });
@@ -18,23 +18,38 @@ const pool = mysql.createPool({
   user: process.env.MYSQLUSER,
   password: process.env.MYSQLPASSWORD,
   database: process.env.MYSQLDATABASE,
-  port: process.env.MYSQLPORT
+  port: Number(process.env.MYSQLPORT || 3306),
+  ssl: { rejectUnauthorized: false } // often needed on Railway
 });
 
-// Simple test route
-app.get('/', (req, res) => res.send('API is running'));
+// Optional: quick health check that touches the database
+app.get('/health', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT 1 AS ok');
+    res.json({ ok: rows[0].ok === 1 });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // Insert data into "testing" table
 app.post('/add', async (req, res) => {
   const { testing } = req.body;
-  if (!testing) return res.status(400).json({ error: 'testing is required' });
+  if (!testing) {
+    return res.status(400).json({ error: 'Field "testing" is required.' });
+  }
 
   try {
-    const [result] = await pool.query('INSERT INTO testing (testing) VALUES (?)', [testing]);
-    res.json({ id: result.insertId, testing });
+    const [result] = await pool.query(
+      'INSERT INTO testing (testing) VALUES (?)',
+      [testing]
+    );
+    res.status(201).json({ id: result.insertId, testing });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Insert error:', err);
+    res.status(500).json({ error: 'Database insert failed.' });
   }
 });
 
-app.listen(process.env.PORT || 3000, () => console.log('Server running'));
+const port = process.env.PORT || 3000;
+app.listen(port, () => console.log(`Server running on port ${port}`));
