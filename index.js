@@ -53,3 +53,21 @@ app.post('/add', async (req, res) => {
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
+
+
+// ✅ NEW: shops endpoint your Flutter app will call
+app.get('/shops', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT DISTINCT `shopName` AS name FROM `chainShop` ORDER BY `shopName` ASC'
+    );
+    const shops = rows
+      .map(r => (r.name ?? '').toString().trim())
+      .filter(s => s.length > 0);
+    res.json({ shops });
+  } catch (e) {
+    console.error('Error in /shops:', e);
+    res.status(500).json({ error: 'Failed to load shops' });
+  }
+});
+
