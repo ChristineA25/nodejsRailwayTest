@@ -1,4 +1,5 @@
 
+// index.js
 import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
@@ -7,22 +8,32 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// A simple page so your browser shows something at the root URL
-app.get('/', (req, res) => {
-  res.send('API is running');
+// Optional: simple API key gate (set API_KEY in Railway vars)
+const API_KEY = process.env.API_KEY;
+app.use((req, res, next) => {
+  if (!API_KEY) return next();                  // if not set, allow all
+  const key = req.get('x-api-key');
+  if (key !== API_KEY) return res.status(401).json({ error: 'Unauthorized' });
+  next();
 });
 
-// Connect to Railway MySQL using environment variables
+// Create a MySQL pool using Railway-provided env vars
 const pool = mysql.createPool({
   host: process.env.MYSQLHOST,
   user: process.env.MYSQLUSER,
   password: process.env.MYSQLPASSWORD,
   database: process.env.MYSQLDATABASE,
   port: Number(process.env.MYSQLPORT || 3306),
-  ssl: { rejectUnauthorized: false } // often needed on Railway
+  ssl: { rejectUnauthorized: false },          // common for Railway
+  waitForConnections: true,
+  connectionLimit: 5,
+  queueLimit: 0,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 10000
 });
 
-// Optional: quick health check that touches the database
+// Root & health
+app.get('/', (req, res) => res.send('API is running'));
 app.get('/health', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT 1 AS ok');
@@ -32,30 +43,7 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// Insert data into "testing" table
-app.post('/add', async (req, res) => {
-  const { testing } = req.body;
-  if (!testing) {
-    return res.status(400).json({ error: 'Field "testing" is required.' });
-  }
-
-  try {
-    const [result] = await pool.query(
-      'INSERT INTO testing (testing) VALUES (?)',
-      [testing]
-    );
-    res.status(201).json({ id: result.insertId, testing });
-  } catch (err) {
-    console.error('Insert error:', err);
-    res.status(500).json({ error: 'Database insert failed.' });
-  }
-});
-
-const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Server running on port ${port}`));
-
-
-// ✅ NEW: shops endpoint your Flutter app will call
+// ✅ Shops endpoint for Flutter Source dropdown
 app.get('/shops', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -71,3 +59,19 @@ app.get('/shops', async (req, res) => {
   }
 });
 
+// Example write endpoint you already had
+app.post('/add', async (req, res) => {
+  const { testing } = req.body;
+  if (!testing) return res.status(400).json({ error: 'Field "testing" is required.' });
+  try {
+    const [result] = await pool.query('INSERT INTO testing (testing) VALUES (?)', [testing]);
+    res.status(201).json({ id: result.insertId, testing });
+  } catch (err) {
+    console.error('Insert error:', err);
+    res.status(500).json({ error: 'Database insert failed.' });
+  }
+});
+
+// Start server last
+const port = process.env.PORT || 3000;
+app.listen(port, () => console.log(`Server running on port ${port}`));
