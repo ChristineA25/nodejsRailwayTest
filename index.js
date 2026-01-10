@@ -72,6 +72,22 @@ app.post('/add', async (req, res) => {
   }
 });
 
+// ✅ Brands endpoint for Flutter Brand dropdown
+app.get('/brands', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT DISTINCT `brand` AS name FROM `prices` WHERE `brand` IS NOT NULL AND `brand` <> "" ORDER BY `brand` ASC'
+    );
+    const brands = rows
+      .map(r => (r.name ?? '').toString().trim())
+      .filter(s => s.length > 0);
+    res.json({ brands });
+  } catch (e) {
+    console.error('Error in /brands:', e);
+    res.status(500).json({ error: 'Failed to load brands' });
+  }
+});
+
 // Start server last
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
