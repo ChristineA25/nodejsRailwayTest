@@ -88,24 +88,33 @@ app.get('/brands', async (req, res) => {
   }
 });
 
-// GET /items  ->  returns: { items: ["apple","lemon", ...] }
+
+// index.js (add below your /shops endpoint)
 app.get('/items', async (req, res) => {
   try {
-    // Optional filters (you can extend later): ?category=fruit
-    const { category } = req.query;
+    // Optional filters from querystring (brand, channel, shopID) if you need them
+    const { brand, channel, shopID } = req.query;
 
-    let sql = 'SELECT DISTINCT `item` AS name FROM `itemColor4`';
+    // Build a simple SQL with optional WHERE clauses
+    const where = [];
     const params = [];
-    if (category && category.trim().length > 0) {
-      sql += ' WHERE FIND_IN_SET(?, REPLACE(`category`, " ", "")) > 0';
-      params.push(category.trim()); // assuming 'fruit, food' style
-    }
-    sql += ' ORDER BY `item` ASC';
+    if (brand)   { where.push('`brand` = ?');   params.push(brand);   }
+    if (channel) { where.push('`channel` = ?'); params.push(channel); }
+    if (shopID)  { where.push('`shopID` = ?');  params.push(shopID);  }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const sql = `
+      SELECT DISTINCT \`item\` AS name
+      FROM \`prices\`
+      ${whereSql}
+      ORDER BY \`item\` ASC
+    `;
 
     const [rows] = await pool.query(sql, params);
     const items = rows
       .map(r => (r.name ?? '').toString().trim())
       .filter(s => s.length > 0);
+
     res.json({ items });
   } catch (e) {
     console.error('Error in /items:', e);
