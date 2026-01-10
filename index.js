@@ -122,6 +122,24 @@ app.get('/items', async (req, res) => {
   }
 });
 
+// index.js (add near your other endpoints)
+
+app.get('/items-textless', async (req, res) => {
+  try {
+    // Adjust table/column names if different in your DB
+    const [rows] = await pool.query(
+      'SELECT DISTINCT `item` AS name FROM `itemColor4` WHERE `item` IS NOT NULL AND `item` <> "" ORDER BY `item` ASC'
+    );
+    const items = rows
+      .map(r => (r.name ?? '').toString().trim())
+      .filter(s => s.length > 0);
+
+    res.json({ items });
+  } catch (e) {
+    console.error('Error in /items-textless:', e);
+    res.status(500).json({ error: 'Failed to load textless items' });
+  }
+});
 
 // Start server last
 const port = process.env.PORT || 3000;
