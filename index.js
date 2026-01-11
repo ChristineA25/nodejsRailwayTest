@@ -257,6 +257,47 @@ app.get('/phone/regions', async (req, res) => {
 });
 
 
+// --- validate and normalize to E.164 ---
+// Body: { iso2: "GB", local: "7123456789" }
+app.post('/phone/validate', async (req, res) => {
+  try {
+    const { iso2, local } = req.body || {};
+    if (!iso2 || typeof local !== 'string') {
+      return res.status(400).json({ valid: false, error: 'iso2 and local are required' });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT 
+         REPLACE(REPLACE(regionPhoneCode, ' ', ''), '-', '') AS code,
+         minRegionPhoneLength AS min,
+         maxRegionPhoneLength AS max
+       FROM \`phoneInfo\` 
+       WHERE \`countryFlag\` = ? 
+       LIMIT 1`,
+      [iso2]
+    );
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ valid: false, error: 'Unknown country' });
+    }
+
+    const { code, min, max } = rows[0];
+    const national = local.replace(/\D/g, ''); // digits only
+    if (national.length < Number(min) || national.length > Number(max)) {
+      return res.status(422).json({ valid: false, error: `Expected ${min}-${max} digits` });
+    }
+
+    const e164 = `${code}${national}`;
+    if (!/^\+\d{6,20}$/.test(e164)) {
+      return res.status(422).json({ valid: false, error: 'Failed to normalize phone number' });
+    }
+
+    return res.json({ valid: true, e164 });
+  } catch (e) {
+    console.error('Error /phone/validate:', e);
+    res.status(500).json({ valid: false, error: 'Server error' });
+  }
+});
+
 // Start server last
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
