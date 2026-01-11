@@ -141,6 +141,85 @@ app.get('/items-textless', async (req, res) => {
   }
 });
 
+
+// index.js (Node/Express; using your existing pool and app)
+
+// ✅ Item → colours for textless photos (from itemColor4)
+app.get('/item-colors-textless', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT \`item\` AS item, \`color\` AS colors
+      FROM \`itemColor4\`
+      WHERE \`item\` IS NOT NULL AND \`item\` <> ""
+    `);
+    const data = rows.map(r => ({
+      item: (r.item ?? '').toString().trim(),
+      // Normalize to ['red','green',...] lower-case tokens
+      colors: (r.colors ?? '')
+        .toString()
+        .toLowerCase()
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0),
+    })).filter(x => x.item.length > 0);
+    res.json({ items: data });
+  } catch (e) {
+    console.error('Error in /item-colors-textless:', e);
+    res.status(500).json({ error: 'Failed to load textless item colours' });
+  }
+});
+
+// ✅ Item → colours for goods photo without receipt (from prices.productColor)
+// Optional filters (brand, channel, shopID) same as your /items endpoint.
+app.get('/item-colors', async (req, res) => {
+  try {
+    const { brand, channel, shopID } = req.query;
+    const where = [];
+    const params = [];
+    if (brand)   { where.push('`brand` = ?');   params.push(brand);   }
+    if (channel) { where.push('`channel` = ?'); params.push(channel); }
+    if (shopID)  { where.push('`shopID` = ?');  params.push(shopID);  }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const [rows] = await pool.query(`
+      SELECT \`item\` AS item, \`productColor\` AS colors
+      FROM \`prices\`
+      ${whereSql}
+      -- no DISTINCT on item here to preserve ordered colours per row;
+      -- we’ll aggregate in JS by item.
+    `, params);
+
+    // Aggregate by item; take the longest non-empty colour string if multiple rows
+    const byItem = new Map();
+    for (const r of rows) {
+      const item = (r.item ?? '').toString().trim();
+      const colorsStr = (r.colors ?? '').toString().trim();
+      if (!item || !colorsStr) continue;
+      const existing = byItem.get(item) ?? '';
+      // Prefer the entry with more colours (assumes richer pictureColor string)
+      if (colorsStr.length > existing.length) byItem.set(item, colorsStr);
+    }
+
+    const data = Array.from(byItem.entries()).map(([item, colorsStr]) => ({
+      item,
+      // Keep order (most abundant first); normalize tokens
+      colors: colorsStr
+        .toLowerCase()
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0),
+    }));
+
+    // Sort items alphabetically for determinism
+    data.sort((a, b) => a.item.localeCompare(b.item));
+    res.json({ items: data });
+  } catch (e) {
+    console.error('Error in /item-colors:', e);
+    res.status(500).json({ error: 'Failed to load item colours' });
+  }
+});
+
 // Start server last
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
