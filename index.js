@@ -33,19 +33,6 @@ const pool = mysql.createPool({
 });
 
 // ---- Helpers ----------------------------------------------------------------
-/** ISO2 -> flag emoji (e.g., 'GB' -> '🇬🇧') */
-function iso2ToFlag(iso2) {
-  if (!iso2 || iso2.length !== 2) return '';
-  const A = 0x1F1E6; // Regional Indicator 'A'
-  const base = 'A'.charCodeAt(0);
-  const up = iso2.toUpperCase();
-  const cps = [
-    A + (up.charCodeAt(0) - base),
-    A + (up.charCodeAt(1) - base),
-  ];
-  return String.fromCodePoint(...cps);
-}
-
 /** Normalize to canonical '+<digits>' (e.g., '+ 1-264' -> '+1264') */
 function normalizeCode(s) {
   const raw = String(s || '');
@@ -67,8 +54,8 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-// ---- PHONE: regions from MySQL (with emoji) ---------------------------------
-// Returns: { regions: [{ iso2, name, code, displayCode, min, max, flag }] }
+// ---- PHONE: regions from MySQL ---------------------------------------------
+// Returns: { regions: [{ iso2, name, code, displayCode, min, max }] }
 app.get('/phone/regions', async (_req, res) => {
   try {
     const [rows] = await pool.query(`
@@ -86,15 +73,14 @@ app.get('/phone/regions', async (_req, res) => {
     const regions = rows.map(r => {
       const iso2 = String(r.iso2 || '').trim().toUpperCase();
       const displayCode = String(r.phoneCode ?? '').trim();
-      const code = normalizeCode(displayCode);
+      const code = normalizeCode(displayCode);     // canonical '+<digits>'
       return {
         iso2,
         name: String(r.name || '').trim(),
-        code,                    // canonical '+<digits>'
-        displayCode,             // pretty (as stored), may include spaces/hyphens
+        code,                                      // e.g. '+44'
+        displayCode,                               // e.g. '+ 1-264'
         min: Number(r.minLen || 0),
         max: Number(r.maxLen || 0),
-        flag: iso2ToFlag(iso2),  // emoji
       };
     });
 
@@ -141,7 +127,7 @@ app.post('/phone/validate', async (req, res) => {
   }
 });
 
-// ---- Your existing data endpoints (kept; adjust table/column names if needed)
+// ---- Your existing data endpoints (unchanged; adjust names if needed) -------
 app.get('/shops', async (_req, res) => {
   try {
     const [rows] = await pool.query(
