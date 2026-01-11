@@ -220,6 +220,43 @@ app.get('/item-colors', async (req, res) => {
   }
 });
 
+
+// --- phone regions for the app dropdown ---
+app.get('/phone/regions', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        \`countryFlag\` AS iso2,              -- e.g., 'GB'
+        UPPER(\`regionID\`) AS iso3,          -- e.g., 'GBR' (or your alpha-3)
+        \`regionName\` AS name,               -- e.g., 'United Kingdom'
+        REPLACE(REPLACE(\`regionPhoneCode\`, ' ', ''), '-', '') AS code, -- canonical '+<digits>'
+        \`regionPhoneCode\` AS displayCode,   -- human-friendly '+1-264' if you keep hyphens
+        \`minRegionPhoneLength\` AS min,
+        \`maxRegionPhoneLength\` AS max
+      FROM \`phoneInfo\`
+      ORDER BY \`regionName\` ASC
+    `);
+
+    const regions = rows
+      .map(r => ({
+        iso2: (r.iso2 ?? '').trim(),
+        iso3: (r.iso3 ?? '').trim(),
+        name: (r.name ?? '').trim(),
+        code: (r.code ?? '').trim(),            // '+44'
+        displayCode: (r.displayCode ?? '').trim(), // '+44' or '+1-264'
+        min: Number(r.min ?? 0),
+        max: Number(r.max ?? 0),
+      }))
+      .filter(r => r.iso2 && r.name && r.code.startsWith('+'));
+
+    res.json({ regions });
+  } catch (e) {
+    console.error('Error /phone/regions:', e);
+    res.status(500).json({ error: 'Failed to load phone regions' });
+  }
+});
+
+
 // Start server last
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
