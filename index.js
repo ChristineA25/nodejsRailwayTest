@@ -1,96 +1,71 @@
 
-// index.js (ES Modules)
+// index.js (ESM)
 import express from 'express';
 import cors from 'cors';
-import mysql from 'mysql2/promise';
+import bcrypt from 'bcryptjs';
+import { pool, pingDB } from './db.js';
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
 
-// Optional: simple API key gate (set API_KEY in Railway vars)
+// Optional: simple API key gate (set API_KEY in Railway Variables)
 const API_KEY = process.env.API_KEY;
 app.use((req, res, next) => {
-  if (!API_KEY) return next();                 // allow all if not configured
+  if (!API_KEY) return next(); // allow all if not configured
   const key = req.get('x-api-key');
   if (key !== API_KEY) return res.status(401).json({ error: 'Unauthorized' });
   next();
 });
 
-console.log('DB VARS SNAPSHOT', {
-  MYSQLHOST: process.env.MYSQLHOST,
-  MYSQLUSER: process.env.MYSQLUSER,
-  MYSQLDATABASE: process.env.MYSQLDATABASE,  // should NOT be undefined/empty
-  MYSQLPORT: process.env.MYSQLPORT,
+// Root & health
+app.get('/', (_req, res) => res.send('API is running'));
+app.get('/health', async (_req, res) => {
+  try {
+    const ok = await pingDB();
+    return res.json({ ok });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
-// ---- MySQL pool (Railway) ---------------------------------------------------
-const pool = mysql.createPool({
-  host: process.env.MYSQLHOST,
-  user: process.env.MYSQLUSER,
-  password: process.env.MYSQLPASSWORD,
-  database: process.env.MYSQLDATABASE,
-  port: Number(process.env.MYSQLPORT || 3306),
-  ssl: { rejectUnauthorized: false }, // typical for Railway
-  waitForConnections: true,
-  connectionLimit: 5,
-  queueLimit: 0,
-  enableKeepAlive: true,
-  keepAliveInitialDelay: 10000
-});
-
-// ---- Helpers ----------------------------------------------------------------
 /** Normalize to canonical '+<digits>' (e.g., '+ 1-264' -> '+1264') */
 function normalizeCode(s) {
-  const raw = String(s || '');
-  const digits = raw.replace(/[^\d+]/g, '');   // keep '+' and digits
+  const raw = String(s ?? '');
+  const digits = raw.replace(/[^\d+]/g, ''); // keep '+' and digits
   if (!digits.startsWith('+')) {
     return '+' + digits.replace(/\D/g, '');
   }
   return '+' + digits.slice(1).replace(/\D/g, '');
 }
 
-// ---- Routes: root & health --------------------------------------------------
-app.get('/', (_req, res) => res.send('API is running'));
-app.get('/health', async (_req, res) => {
-  try {
-    const [rows] = await pool.query('SELECT 1 AS ok');
-    return res.json({ ok: rows[0]?.ok === 1 });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// ---- PHONE: regions from MySQL ---------------------------------------------
-// Returns: { regions: [{ iso2, name, code, displayCode, min, max }] }
+// --- PHONE: regions from MySQL (preserving your query & mapping) ---
 app.get('/phone/regions', async (_req, res) => {
   try {
     const [rows] = await pool.query(`
       SELECT
-        regionName              AS name,
-        regionPhoneCode         AS phoneCode,
-        minRegionPhoneLength    AS minLen,
-        maxRegionPhoneLength    AS maxLen,
-        countryFlag             AS iso2
+        regionName AS name,
+        regionPhoneCode AS phoneCode,
+        minRegionPhoneLength AS minLen,
+        maxRegionPhoneLength AS maxLen,
+        countryFlag AS iso2
       FROM phoneInfo
       WHERE countryFlag IS NOT NULL AND countryFlag <> ''
       ORDER BY name ASC
     `);
-
     const regions = rows.map(r => {
-      const iso2 = String(r.iso2 || '').trim().toUpperCase();
+      const iso2 = String(r.iso2 ?? '').trim().toUpperCase();
       const displayCode = String(r.phoneCode ?? '').trim();
-      const code = normalizeCode(displayCode);     // canonical '+<digits>'
+      const code = normalizeCode(displayCode); // canonical '+<digits>'
       return {
         iso2,
-        name: String(r.name || '').trim(),
-        code,                                      // e.g. '+44'
-        displayCode,                               // e.g. '+ 1-264'
-        min: Number(r.minLen || 0),
-        max: Number(r.maxLen || 0),
+        name: String(r.name ?? '').trim(),
+        code,          // e.g. '+44'
+        displayCode,   // e.g. '+ 1-264'
+        min: Number(r.minLen ?? 0),
+        max: Number(r.maxLen ?? 0),
       };
     });
-
     return res.json({ regions });
   } catch (e) {
     console.error('Error in /phone/regions:', e);
@@ -98,13 +73,11 @@ app.get('/phone/regions', async (_req, res) => {
   }
 });
 
-// ---- PHONE: validate local number against a region --------------------------
-// Expects: { iso2: 'GB', local: '7123456789' }
-// Returns: { valid: boolean, e164?: '+447123456789' }
+// --- PHONE: validate local number against a region ---
 app.post('/phone/validate', async (req, res) => {
   try {
-    const iso2Req = String(req.body?.iso2 || '').trim().toUpperCase();
-    const localRaw = String(req.body?.local || '');
+    const iso2Req = String(req.body?.iso2 ?? '').trim().toUpperCase();
+    const localRaw = String(req.body?.local ?? '');
     const localDigits = localRaw.replace(/\D/g, '');
     if (!iso2Req || !localDigits) return res.json({ valid: false });
 
@@ -119,12 +92,11 @@ app.post('/phone/validate', async (req, res) => {
     if (!rows || rows.length === 0) return res.json({ valid: false });
 
     const row = rows[0];
-    const minLen = Number(row.minLen || 0);
-    const maxLen = Number(row.maxLen || 0);
+    const minLen = Number(row.minLen ?? 0);
+    const maxLen = Number(row.maxLen ?? 0);
     if (localDigits.length < minLen || localDigits.length > maxLen) {
       return res.json({ valid: false });
     }
-
     const canonCode = normalizeCode(row.phoneCode); // '+44', '+1264', etc.
     const e164 = `${canonCode}${localDigits}`;
     return res.json({ valid: true, e164 });
@@ -134,7 +106,7 @@ app.post('/phone/validate', async (req, res) => {
   }
 });
 
-// ---- Your existing data endpoints (unchanged; adjust names if needed) -------
+// --- SHOPS / BRANDS / ITEMS / COLORS (kept from your file) ---
 app.get('/shops', async (_req, res) => {
   try {
     const [rows] = await pool.query(
@@ -166,9 +138,9 @@ app.get('/items', async (req, res) => {
     const { brand, channel, shopID } = req.query;
     const where = [];
     const params = [];
-    if (brand)   { where.push('`brand` = ?');   params.push(brand); }
+    if (brand) { where.push('`brand` = ?'); params.push(brand); }
     if (channel) { where.push('`channel` = ?'); params.push(channel); }
-    if (shopID)  { where.push('`shopID` = ?');  params.push(shopID); }
+    if (shopID) { where.push('`shopID` = ?'); params.push(shopID); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const sql = `
       SELECT DISTINCT \`item\` AS name
@@ -205,15 +177,17 @@ app.get('/item-colors-textless', async (_req, res) => {
       FROM \`itemColor4\`
       WHERE \`item\` IS NOT NULL AND \`item\` <> ""
     `);
-    const data = rows.map(r => ({
-      item: (r.item ?? '').toString().trim(),
-      colors: (r.colors ?? '')
-        .toString()
-        .toLowerCase()
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean),
-    })).filter(x => x.item.length > 0);
+    const data = rows
+      .map(r => ({
+        item: (r.item ?? '').toString().trim(),
+        colors: (r.colors ?? '')
+          .toString()
+          .toLowerCase()
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean),
+      }))
+      .filter(x => x.item.length > 0);
     res.json({ items: data });
   } catch (e) {
     console.error('Error in /item-colors-textless:', e);
@@ -226,9 +200,9 @@ app.get('/item-colors', async (req, res) => {
     const { brand, channel, shopID } = req.query;
     const where = [];
     const params = [];
-    if (brand)   { where.push('`brand` = ?');   params.push(brand); }
+    if (brand) { where.push('`brand` = ?'); params.push(brand); }
     if (channel) { where.push('`channel` = ?'); params.push(channel); }
-    if (shopID)  { where.push('`shopID` = ?');  params.push(shopID); }
+    if (shopID) { where.push('`shopID` = ?'); params.push(shopID); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(`
       SELECT \`item\` AS item, \`productColor\` AS colors
@@ -244,15 +218,12 @@ app.get('/item-colors', async (req, res) => {
       const existing = byItem.get(item) ?? '';
       if (colorsStr.length > existing.length) byItem.set(item, colorsStr);
     }
-    const data = Array.from(byItem.entries()).map(([item, colorsStr]) => ({
-      item,
-      colors: colorsStr
-        .toLowerCase()
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean),
-    })).sort((a, b) => a.item.localeCompare(b.item));
-
+    const data = Array.from(byItem.entries())
+      .map(([item, colorsStr]) => ({
+        item,
+        colors: colorsStr.toLowerCase().split(',').map(s => s.trim()).filter(Boolean),
+      }))
+      .sort((a, b) => a.item.localeCompare(b.item));
     res.json({ items: data });
   } catch (e) {
     console.error('Error in /item-colors:', e);
@@ -260,8 +231,9 @@ app.get('/item-colors', async (req, res) => {
   }
 });
 
+// --- Simple test insert (unchanged) ---
 app.post('/add', async (req, res) => {
-  const { testing } = req.body || {};
+  const { testing } = req.body ?? {};
   if (!testing) return res.status(400).json({ error: 'Field "testing" is required.' });
   try {
     const [result] = await pool.query('INSERT INTO testing (testing) VALUES (?)', [testing]);
@@ -272,71 +244,62 @@ app.post('/add', async (req, res) => {
   }
 });
 
-// POST /signup
+// --- SIGNUP (fixed) ---
 app.post('/signup', async (req, res) => {
   try {
     const {
       username,
       email,
-      password,              // store hashed!
-      phone_country_code,    // e.g., "852"
-      phone_number,          // e.g., "12345678"
-      q1, a1, q2, a2, q3, a3
+      password,            // from Flutter client
+      phone_country_code,  // digits only, e.g. "678"
+      phone_number,        // digits only
+      q1, a1, q2, a2, q3, a3,
     } = req.body;
 
-    // 1) Basic validation
     if (!password || password.length < 8) {
       return res.status(400).json({ error: 'Weak or missing password' });
     }
 
-    // Accept any one identifier. If none provided, derive one from phone.
+    // Allow any one identifier; if none given, derive from phone
     let finalUsername = username ?? null;
     const finalEmail = email ?? null;
-
     if (!finalUsername && !finalEmail && phone_country_code && phone_number) {
-      // generate a safe username from phone
       finalUsername = `u_${phone_country_code}_${phone_number}`;
     }
-
     if (!finalUsername && !finalEmail) {
       return res.status(400).json({ error: 'Provide username, email, or phone' });
     }
 
-    // 2) Hash password (very important in production)
+    // Hash password (bcryptjs)
     const hashed = await bcrypt.hash(password, 10);
 
-    // 3) Build INSERT. Example table columns:
-    // id (PK, auto), username (NULL ok), email (NULL ok),
-    // password_hash, phone_country_code, phone_number,
-    // q1,a1,q2,a2,q3,a3, created_at
+    // Insert into loginTable (store hashed in 'password' column)
     const sql = `
       INSERT INTO loginTable
-        (username, email, password_hash, phone_country_code, phone_number,
-         q1, a1, q2, a2, q3, a3, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        (username, password, email, phone_country_code, phone_number, q1, a1, q2, a2, q3, a3)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
-
     const params = [
       finalUsername,
-      finalEmail,
       hashed,
+      finalEmail,
       phone_country_code ?? null,
       phone_number ?? null,
       q1 ?? null, a1 ?? null,
       q2 ?? null, a2 ?? null,
-      q3 ?? null, a3 ?? null
+      q3 ?? null, a3 ?? null,
     ];
 
-    const [result] = await db.execute(sql, params);
-    // mysql2 returns insertId for AUTOINCREMENT PK
+    const [result] = await pool.query(sql, params);
     return res.status(201).json({ userID: result.insertId });
   } catch (err) {
-    console.error('Signup error:', err); // <-- keep this to see real error cause
+    if (err && err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Identifier already exists' });
+    }
+    console.error('Signup error:', err); // keep for diagnostics
     return res.status(500).json({ error: 'Server error' });
   }
 });
 
-
-// ---- Start server -----------------------------------------------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
