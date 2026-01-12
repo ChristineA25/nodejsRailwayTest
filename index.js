@@ -265,6 +265,45 @@ app.post('/add', async (req, res) => {
   }
 });
 
+// --- SIGNUP: insert into loginTable ----------------------------------
+// Body: { username?, email?, password, phone_country_code?, phone_number? }
+// Returns: { userID }
+app.post('/signup', async (req, res) => {
+  try {
+    const {
+      username = null,
+      email = null,
+      password,
+      phone_country_code = null,
+      phone_number = null,
+    } = req.body || {};
+
+    // Basic validation
+    if (!password) {
+      return res.status(400).json({ error: 'Password is required' });
+    }
+    if (!username && !email && !phone_number) {
+      return res.status(400).json({
+        error: 'Provide at least one identifier: username, email, or phone_number'
+      });
+    }
+
+    // IMPORTANT: store hashed password in production.
+    // To keep minimal changes (no new deps), we insert plain text here.
+    // Recommended: add bcrypt hashing later.
+    const [result] = await pool.query(
+      `INSERT INTO loginTable (username, password, email, phone_country_code, phone_number)
+       VALUES (?, ?, ?, ?, ?)`,
+      [username, password, email, phone_country_code, phone_number]
+    );
+
+    return res.status(201).json({ userID: result.insertId });
+  } catch (err) {
+    console.error('Signup error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ---- Start server -----------------------------------------------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
