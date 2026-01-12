@@ -17,6 +17,13 @@ app.use((req, res, next) => {
   next();
 });
 
+console.log('DB VARS SNAPSHOT', {
+  MYSQLHOST: process.env.MYSQLHOST,
+  MYSQLUSER: process.env.MYSQLUSER,
+  MYSQLDATABASE: process.env.MYSQLDATABASE,  // should NOT be undefined/empty
+  MYSQLPORT: process.env.MYSQLPORT,
+});
+
 // ---- MySQL pool (Railway) ---------------------------------------------------
 const pool = mysql.createPool({
   host: process.env.MYSQLHOST,
@@ -327,14 +334,6 @@ app.post('/signup', async (req, res) => {
     console.error('Signup error:', err); // <-- keep this to see real error cause
     return res.status(500).json({ error: 'Server error' });
   }
-});
-
-
-console.log('DB VARS SNAPSHOT', {
-  MYSQLHOST: process.env.MYSQLHOST,
-  MYSQLUSER: process.env.MYSQLUSER,
-  MYSQLDATABASE: process.env.MYSQLDATABASE,  // should NOT be undefined/empty
-  MYSQLPORT: process.env.MYSQLPORT,
 });
 
 
