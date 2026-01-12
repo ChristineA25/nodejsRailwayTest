@@ -265,41 +265,66 @@ app.post('/add', async (req, res) => {
   }
 });
 
-// --- SIGNUP: insert into loginTable ----------------------------------
-// Body: { username?, email?, password, phone_country_code?, phone_number? }
-// Returns: { userID }
+// POST /signup
 app.post('/signup', async (req, res) => {
   try {
     const {
-      username = null,
-      email = null,
-      password,
-      phone_country_code = null,
-      phone_number = null,
-    } = req.body || {};
+      username,
+      email,
+      password,              // store hashed!
+      phone_country_code,    // e.g., "852"
+      phone_number,          // e.g., "12345678"
+      q1, a1, q2, a2, q3, a3
+    } = req.body;
 
-    // Basic validation
-    if (!password) {
-      return res.status(400).json({ error: 'Password is required' });
-    }
-    if (!username && !email && !phone_number) {
-      return res.status(400).json({
-        error: 'Provide at least one identifier: username, email, or phone_number'
-      });
+    // 1) Basic validation
+    if (!password || password.length < 8) {
+      return res.status(400).json({ error: 'Weak or missing password' });
     }
 
-    // IMPORTANT: store hashed password in production.
-    // To keep minimal changes (no new deps), we insert plain text here.
-    // Recommended: add bcrypt hashing later.
-    const [result] = await pool.query(
-      `INSERT INTO loginTable (username, password, email, phone_country_code, phone_number)
-       VALUES (?, ?, ?, ?, ?)`,
-      [username, password, email, phone_country_code, phone_number]
-    );
+    // Accept any one identifier. If none provided, derive one from phone.
+    let finalUsername = username ?? null;
+    const finalEmail = email ?? null;
 
+    if (!finalUsername && !finalEmail && phone_country_code && phone_number) {
+      // generate a safe username from phone
+      finalUsername = `u_${phone_country_code}_${phone_number}`;
+    }
+
+    if (!finalUsername && !finalEmail) {
+      return res.status(400).json({ error: 'Provide username, email, or phone' });
+    }
+
+    // 2) Hash password (very important in production)
+    const hashed = await bcrypt.hash(password, 10);
+
+    // 3) Build INSERT. Example table columns:
+    // id (PK, auto), username (NULL ok), email (NULL ok),
+    // password_hash, phone_country_code, phone_number,
+    // q1,a1,q2,a2,q3,a3, created_at
+    const sql = `
+      INSERT INTO loginTable
+        (username, email, password_hash, phone_country_code, phone_number,
+         q1, a1, q2, a2, q3, a3, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+    `;
+
+    const params = [
+      finalUsername,
+      finalEmail,
+      hashed,
+      phone_country_code ?? null,
+      phone_number ?? null,
+      q1 ?? null, a1 ?? null,
+      q2 ?? null, a2 ?? null,
+      q3 ?? null, a3 ?? null
+    ];
+
+    const [result] = await db.execute(sql, params);
+    // mysql2 returns insertId for AUTOINCREMENT PK
     return res.status(201).json({ userID: result.insertId });
   } catch (err) {
-    console.error('Signup error:', err);
+    console.error('Signup error:', err); // <-- keep this to see real error cause
     return res.status(500).json({ error: 'Server error' });
   }
 });
