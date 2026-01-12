@@ -276,7 +276,7 @@ app.post('/signup', async (req, res) => {
     // Insert into loginTable (store hashed in 'password' column)
     const sql = `
       INSERT INTO loginTable
-        (username, password, email, phone_country_code, phone_number, q1, a1, q2, a2, q3, a3)
+        (username, password, email, phone_country_code, phone_number, secuQuestion1, secuAns1, secuQuestion2, secuAns2, secuQuestion3, secuAns3)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     const params = [
