@@ -3,6 +3,7 @@
 import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
+import bcrypt from 'bcryptjs'; // ✅ needed for hashing
 
 const app = express();
 app.use(cors());
@@ -11,39 +12,62 @@ app.use(express.json({ limit: '256kb' }));
 // Optional: simple API key gate (set API_KEY in Railway vars)
 const API_KEY = process.env.API_KEY;
 app.use((req, res, next) => {
-  if (!API_KEY) return next();                 // allow all if not configured
+  if (!API_KEY) return next();          // allow all if not configured
   const key = req.get('x-api-key');
   if (key !== API_KEY) return res.status(401).json({ error: 'Unauthorized' });
   next();
 });
 
-// ---- MySQL pool (Railway) ---------------------------------------------------
+// ---------- MySQL pool (Railway) ----------
+/**
+ * Ensure these Railway variables are set on your Node service:
+ *   MYSQLHOST, MYSQLUSER, MYSQLPASSWORD, MYSQLDATABASE, MYSQLPORT (optional)
+ */
 const pool = mysql.createPool({
   host: process.env.MYSQLHOST,
   user: process.env.MYSQLUSER,
   password: process.env.MYSQLPASSWORD,
-  database: process.env.MYSQLDATABASE,
-  port: Number(process.env.MYSQLPORT || 3306),
-  ssl: { rejectUnauthorized: false }, // typical for Railway
+  database: process.env.MYSQLDATABASE,     // ✅ REQUIRED — the DB/schema name
+  port: Number(process.env.MYSQLPORT ?? 3306),
+  ssl: { rejectUnauthorized: false },      // common on Railway
   waitForConnections: true,
   connectionLimit: 5,
   queueLimit: 0,
   enableKeepAlive: true,
-  keepAliveInitialDelay: 10000
+  keepAliveInitialDelay: 10_000,
 });
 
-// ---- Helpers ----------------------------------------------------------------
+// ----- Boot-time safety check (prints helpful info) -----
+(async () => {
+  try {
+    const [dbRow] = await pool.query('SELECT DATABASE() AS db');
+    console.log('Connected to DB:', dbRow[0]?.db ?? '(null)');
+
+    // Probe one table that should exist; wrap in try..catch so it doesn't crash startup
+    try {
+      await pool.query('SELECT 1 FROM loginTable LIMIT 1');
+      console.log('loginTable is accessible');
+    } catch (tErr) {
+      console.warn('loginTable probe failed:', tErr?.message);
+      console.warn('If this is first run, create the schema/table before inserting.');
+    }
+  } catch (err) {
+    console.error('DB bootstrap check failed:', err);
+  }
+})();
+
+// ---------- Helpers ----------
 /** Normalize to canonical '+<digits>' (e.g., '+ 1-264' -> '+1264') */
 function normalizeCode(s) {
-  const raw = String(s || '');
-  const digits = raw.replace(/[^\d+]/g, '');   // keep '+' and digits
+  const raw = String(s ?? '');
+  const digits = raw.replace(/[^\d\+]/g, '');  // keep '+' and digits
   if (!digits.startsWith('+')) {
     return '+' + digits.replace(/\D/g, '');
   }
   return '+' + digits.slice(1).replace(/\D/g, '');
 }
 
-// ---- Routes: root & health --------------------------------------------------
+// ---------- Routes: root & health ----------
 app.get('/', (_req, res) => res.send('API is running'));
 app.get('/health', async (_req, res) => {
   try {
@@ -54,36 +78,33 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-// ---- PHONE: regions from MySQL ---------------------------------------------
-// Returns: { regions: [{ iso2, name, code, displayCode, min, max }] }
+// ---------- PHONE: regions from MySQL ----------
 app.get('/phone/regions', async (_req, res) => {
   try {
     const [rows] = await pool.query(`
       SELECT
-        regionName              AS name,
-        regionPhoneCode         AS phoneCode,
-        minRegionPhoneLength    AS minLen,
-        maxRegionPhoneLength    AS maxLen,
-        countryFlag             AS iso2
+        regionName AS name,
+        regionPhoneCode AS phoneCode,
+        minRegionPhoneLength AS minLen,
+        maxRegionPhoneLength AS maxLen,
+        countryFlag AS iso2
       FROM phoneInfo
       WHERE countryFlag IS NOT NULL AND countryFlag <> ''
       ORDER BY name ASC
     `);
-
     const regions = rows.map(r => {
-      const iso2 = String(r.iso2 || '').trim().toUpperCase();
+      const iso2 = String(r.iso2 ?? '').trim().toUpperCase();
       const displayCode = String(r.phoneCode ?? '').trim();
-      const code = normalizeCode(displayCode);     // canonical '+<digits>'
+      const code = normalizeCode(displayCode); // canonical '+<digits>'
       return {
         iso2,
-        name: String(r.name || '').trim(),
-        code,                                      // e.g. '+44'
-        displayCode,                               // e.g. '+ 1-264'
-        min: Number(r.minLen || 0),
-        max: Number(r.maxLen || 0),
+        name: String(r.name ?? '').trim(),
+        code,                   // e.g. '+44'
+        displayCode,            // e.g. '+ 1-264'
+        min: Number(r.minLen ?? 0),
+        max: Number(r.maxLen ?? 0),
       };
     });
-
     return res.json({ regions });
   } catch (e) {
     console.error('Error in /phone/regions:', e);
@@ -91,13 +112,11 @@ app.get('/phone/regions', async (_req, res) => {
   }
 });
 
-// ---- PHONE: validate local number against a region --------------------------
-// Expects: { iso2: 'GB', local: '7123456789' }
-// Returns: { valid: boolean, e164?: '+447123456789' }
+// ---------- PHONE: validate local number ----------
 app.post('/phone/validate', async (req, res) => {
   try {
-    const iso2Req = String(req.body?.iso2 || '').trim().toUpperCase();
-    const localRaw = String(req.body?.local || '');
+    const iso2Req = String(req.body?.iso2 ?? '').trim().toUpperCase();
+    const localRaw = String(req.body?.local ?? '');
     const localDigits = localRaw.replace(/\D/g, '');
     if (!iso2Req || !localDigits) return res.json({ valid: false });
 
@@ -112,12 +131,11 @@ app.post('/phone/validate', async (req, res) => {
     if (!rows || rows.length === 0) return res.json({ valid: false });
 
     const row = rows[0];
-    const minLen = Number(row.minLen || 0);
-    const maxLen = Number(row.maxLen || 0);
+    const minLen = Number(row.minLen ?? 0);
+    const maxLen = Number(row.maxLen ?? 0);
     if (localDigits.length < minLen || localDigits.length > maxLen) {
       return res.json({ valid: false });
     }
-
     const canonCode = normalizeCode(row.phoneCode); // '+44', '+1264', etc.
     const e164 = `${canonCode}${localDigits}`;
     return res.json({ valid: true, e164 });
@@ -127,7 +145,7 @@ app.post('/phone/validate', async (req, res) => {
   }
 });
 
-// ---- Your existing data endpoints (unchanged; adjust names if needed) -------
+// ---------- Existing data endpoints (unchanged) ----------
 app.get('/shops', async (_req, res) => {
   try {
     const [rows] = await pool.query(
@@ -239,13 +257,8 @@ app.get('/item-colors', async (req, res) => {
     }
     const data = Array.from(byItem.entries()).map(([item, colorsStr]) => ({
       item,
-      colors: colorsStr
-        .toLowerCase()
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean),
+      colors: colorsStr.toLowerCase().split(',').map(s => s.trim()).filter(Boolean),
     })).sort((a, b) => a.item.localeCompare(b.item));
-
     res.json({ items: data });
   } catch (e) {
     console.error('Error in /item-colors:', e);
@@ -254,7 +267,7 @@ app.get('/item-colors', async (req, res) => {
 });
 
 app.post('/add', async (req, res) => {
-  const { testing } = req.body || {};
+  const { testing } = req.body ?? {};
   if (!testing) return res.status(400).json({ error: 'Field "testing" is required.' });
   try {
     const [result] = await pool.query('INSERT INTO testing (testing) VALUES (?)', [testing]);
@@ -265,15 +278,15 @@ app.post('/add', async (req, res) => {
   }
 });
 
-// POST /signup
+// ---------- POST /signup ----------
 app.post('/signup', async (req, res) => {
   try {
     const {
       username,
       email,
-      password,              // store hashed!
-      phone_country_code,    // e.g., "852"
-      phone_number,          // e.g., "12345678"
+      password,             // store hashed!
+      phone_country_code,   // e.g., "852"
+      phone_number,         // e.g., "12345678"
       q1, a1, q2, a2, q3, a3
     } = req.body;
 
@@ -287,7 +300,7 @@ app.post('/signup', async (req, res) => {
     const finalEmail = email ?? null;
 
     if (!finalUsername && !finalEmail && phone_country_code && phone_number) {
-      // generate a safe username from phone
+      // generate a safe username from phone (matches your Flutter fallback)
       finalUsername = `u_${phone_country_code}_${phone_number}`;
     }
 
@@ -295,20 +308,16 @@ app.post('/signup', async (req, res) => {
       return res.status(400).json({ error: 'Provide username, email, or phone' });
     }
 
-    // 2) Hash password (very important in production)
+    // 2) Hash password
     const hashed = await bcrypt.hash(password, 10);
 
-    // 3) Build INSERT. Example table columns:
-    // id (PK, auto), username (NULL ok), email (NULL ok),
-    // password_hash, phone_country_code, phone_number,
-    // q1,a1,q2,a2,q3,a3, created_at
+    // 3) INSERT (NULLs for missing optional columns)
     const sql = `
       INSERT INTO loginTable
         (username, email, password_hash, phone_country_code, phone_number,
          q1, a1, q2, a2, q3, a3, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `;
-
     const params = [
       finalUsername,
       finalEmail,
@@ -317,18 +326,19 @@ app.post('/signup', async (req, res) => {
       phone_number ?? null,
       q1 ?? null, a1 ?? null,
       q2 ?? null, a2 ?? null,
-      q3 ?? null, a3 ?? null
+      q3 ?? null, a3 ?? null,
     ];
 
-    const [result] = await db.execute(sql, params);
-    // mysql2 returns insertId for AUTOINCREMENT PK
+    // ✅ use the *pool*, not an undefined 'db'
+    const [result] = await pool.execute(sql, params);
+
     return res.status(201).json({ userID: result.insertId });
   } catch (err) {
-    console.error('Signup error:', err); // <-- keep this to see real error cause
+    console.error('Signup error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 });
 
-// ---- Start server -----------------------------------------------------------
-const port = process.env.PORT || 3000;
+// ---------- Start server ----------
+const port = process.env.PORT ?? 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
