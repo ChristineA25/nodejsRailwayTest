@@ -329,6 +329,15 @@ app.post('/signup', async (req, res) => {
   }
 });
 
+
+console.log('DB VARS SNAPSHOT', {
+  MYSQLHOST: process.env.MYSQLHOST,
+  MYSQLUSER: process.env.MYSQLUSER,
+  MYSQLDATABASE: process.env.MYSQLDATABASE,  // should NOT be undefined/empty
+  MYSQLPORT: process.env.MYSQLPORT,
+});
+
+
 // ---- Start server -----------------------------------------------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
