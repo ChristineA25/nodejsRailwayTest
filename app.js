@@ -1,8 +1,8 @@
 
 // app.js
-// Unifies: static + /health + phone validation + /api/signup
+// Unifies: static + /health + DB-backed phone validation + /api/signup
 // Works with your Flutter signup_page.dart which calls /phone/regions, /phone/validate,
-// then POSTs to /api/signup including client-supplied userID.  (See signup_page.dart) 
+// then POSTs to /api/signup including client-supplied userID.  (See signup_page.dart)
 
 const express = require('express');
 const path = require('path');
@@ -31,59 +31,113 @@ try {
 }
 
 // ============================================================================
-// Phone metadata + validation endpoints (kept simple; enough for your Flutter)
+// Phone metadata + validation endpoints (DB-backed)
 // ============================================================================
+
 /**
- * Minimal region dataset (extend as needed). min/max = expected local digits
- * EXCLUDING the country code. For GB we expect 10 digits (e.g., '7123456789').
+ * Normalize a "+ code" value into "+<digits>" (e.g., "+ 1-264" -> "+1264").
  */
-const PHONE_REGIONS = [
-  { iso2: 'GB', name: 'United Kingdom', code: '+44', displayCode: '+44', min: 10, max: 10, trunkPrefix: '0' },
-  { iso2: 'HK', name: 'Hong Kong',     code: '+852',                   min: 8,  max: 8,  trunkPrefix: ''  },
-  { iso2: 'US', name: 'United States', code: '+1',                     min: 10, max: 10, trunkPrefix: ''  },
-];
+const NORMALIZE_CODE = (code) =>
+  String(code || '')
+    .trim()
+    .replace(/\s+/g, '')  // remove spaces
+    .replace(/-/g, '')    // remove hyphens
+    .replace(/^(\+)?(\d+)$/, '+$2'); // ensure single leading '+'
 
 const DIGITS_ONLY = /^\d+$/;
 
-/** GET /phone/regions — what the Flutter page loads into the country dropdown. */
-app.get('/phone/regions', (_req, res) => {
-  res.json({ regions: PHONE_REGIONS });
+/**
+ * GET /phone/regions — returns the country dropdown dataset from DB.
+ * Maps:
+ *   phoneInfo.countryFlag  -> iso2 (alpha-2)
+ *   phoneInfo.regionName   -> name
+ *   phoneInfo.regionPhoneCode -> code (normalized)
+ *   phoneInfo.minRegionPhoneLength / maxRegionPhoneLength -> min/max
+ */
+app.get('/phone/regions', async (_req, res) => {
+  try {
+    const [rows] = await pool.execute(`
+      SELECT countryFlag AS iso2,
+             regionName AS name,
+             regionPhoneCode AS code,
+             minRegionPhoneLength AS min,
+             maxRegionPhoneLength AS max
+      FROM phoneInfo
+      ORDER BY name ASC
+    `);
+
+    // Normalize for the client
+    const regions = rows.map((r) => ({
+      iso2: String(r.iso2 || '').toUpperCase(), // e.g., 'GB'
+      name: String(r.name || ''),
+      code: NORMALIZE_CODE(r.code),              // e.g., '+44'
+      displayCode: NORMALIZE_CODE(r.code),
+      min: Number(r.min || 0),
+      max: Number(r.max || 0),
+      trunkPrefix: '' // optional future support; not present in your table now
+    }));
+
+    res.json({ regions });
+  } catch (err) {
+    console.error('GET /phone/regions error:', err);
+    // Fallback keeps the screen usable if DB query fails
+    res.status(200).json({
+      regions: [
+        { iso2: 'GB', name: 'United Kingdom', code: '+44', displayCode: '+44', min: 10, max: 10, trunkPrefix: '0' }
+      ]
+    });
+  }
 });
 
 /**
  * POST /phone/validate
- * Body: { iso2: 'GB'|'HK'|'US'... , local: 'digits only' (no spaces), optional: { allowLoose: boolean } }
+ * Body: { iso2: 'GB'|'HK'|'US'... , local: 'digits only' (no spaces) }
+ * Uses DB (phoneInfo) as the source of truth.
  * Returns: { valid: boolean, e164?: string, reason?: string }
  */
-app.post('/phone/validate', (req, res) => {
+app.post('/phone/validate', async (req, res) => {
   try {
     const { iso2, local } = req.body || {};
     if (!iso2 || typeof iso2 !== 'string') {
       return res.status(400).json({ valid: false, reason: 'iso2_required' });
     }
-    const region = PHONE_REGIONS.find(r => r.iso2.toUpperCase() === iso2.toUpperCase());
-    if (!region) {
-      return res.status(400).json({ valid: false, reason: 'unsupported_country' });
-    }
     if (!local || typeof local !== 'string' || !DIGITS_ONLY.test(local)) {
       return res.status(200).json({ valid: false, reason: 'digits_only' });
     }
 
-    // length check (expects local length excluding country code, usually without trunk '0')
-    if (local.length < region.min || local.length > region.max) {
-      return res.status(200).json({
-        valid: false,
-        reason: `expected_${region.min}_${region.max}_digits`,
-      });
+    const iso2Up = iso2.toUpperCase().trim();
+
+    const [rows] = await pool.execute(
+      `
+      SELECT regionPhoneCode AS code,
+             minRegionPhoneLength AS min,
+             maxRegionPhoneLength AS max
+      FROM phoneInfo
+      WHERE countryFlag = ?
+      LIMIT 1
+      `,
+      [iso2Up]
+    );
+
+    if (!rows || rows.length === 0) {
+      return res.status(400).json({ valid: false, reason: 'unsupported_country' });
     }
 
-    // Build E.164 (very light rules)
-    let national = local;
-    // If user mistakenly included a trunk '0' in the local (rare with your UI), strip one leading '0' for GB.
-    if (region.trunkPrefix === '0' && national.startsWith('0')) {
-      national = national.replace(/^0/, '');
+    const code = NORMALIZE_CODE(rows[0].code);
+    const min = Number(rows[0].min || 0);
+    const max = Number(rows[0].max || 0);
+
+    // Length check for the local (national) number, excluding country code.
+    if (local.length < min || local.length > max) {
+      return res.status(200).json({ valid: false, reason: `expected_${min}_${max}_digits` });
     }
-    const e164 = `${region.code}${national}`;
+
+    // NOTE: No trunk handling here because your table doesn't include it.
+    // If you later add a trunk column, strip/handle it here per-country.
+    const national = local;
+
+    // Build canonical E.164
+    const e164 = `${code}${national}`;
 
     return res.json({ valid: true, e164 });
   } catch (err) {
@@ -95,6 +149,7 @@ app.post('/phone/validate', (req, res) => {
 // ============================================================================
 // POST /api/signup — expects a client-supplied userID (from Flutter)
 // ============================================================================
+
 /**
  * Expected JSON (any one of username/email/phone can be present):
  * {
@@ -146,6 +201,11 @@ app.post('/api/signup', async (req, res) => {
     }
 
     // Normalize phone fields (support both new + legacy keys)
+    const normISO2 =
+      typeof phoneCountryISO2 === 'string' && phoneCountryISO2.trim()
+        ? phoneCountryISO2.toUpperCase().trim()
+        : null;
+
     const normPhoneCode =
       (typeof phoneCountryCode === 'string' && phoneCountryCode.trim()) ||
       (typeof phone_country_code === 'string' && phone_country_code.trim()) ||
@@ -157,9 +217,50 @@ app.post('/api/signup', async (req, res) => {
       null;
 
     // (Optional) sanity: ensure digits-only for local if provided
-    const localDigitsOnly = normPhoneLocal && /^\d{1,20}$/.test(normPhoneLocal);
-    if (normPhoneLocal && !localDigitsOnly) {
+    if (normPhoneLocal && !/^\d{1,20}$/.test(normPhoneLocal)) {
       return res.status(400).json({ error: 'phone_local_digits_only' });
+    }
+
+    let codeFromDB = null;
+    let computedE164 = null;
+
+    // If phone fields are present, re-validate against DB (source of truth).
+    if (normISO2 && normPhoneLocal) {
+      const [rows] = await pool.execute(
+        `
+        SELECT regionPhoneCode AS code,
+               minRegionPhoneLength AS min,
+               maxRegionPhoneLength AS max
+        FROM phoneInfo
+        WHERE countryFlag = ?
+        LIMIT 1
+        `,
+        [normISO2]
+      );
+
+      if (!rows || rows.length === 0) {
+        return res.status(400).json({ error: 'unsupported_country' });
+      }
+
+      codeFromDB = NORMALIZE_CODE(rows[0].code);
+      const min = Number(rows[0].min || 0);
+      const max = Number(rows[0].max || 0);
+
+      if (normPhoneLocal.length < min || normPhoneLocal.length > max) {
+        return res.status(400).json({ error: `expected_${min}_${max}_digits` });
+      }
+
+      computedE164 = `${codeFromDB}${normPhoneLocal}`;
+
+      // If the client supplied a code, ensure it matches the DB's code.
+      if (normPhoneCode && NORMALIZE_CODE(normPhoneCode) !== codeFromDB) {
+        return res.status(400).json({ error: 'country_code_mismatch' });
+      }
+
+      // If the client supplied phoneE164, ensure it matches our computed one.
+      if (typeof phoneE164 === 'string' && phoneE164.trim() && phoneE164.trim() !== computedE164) {
+        return res.status(400).json({ error: 'e164_mismatch' });
+      }
     }
 
     // Hash password
@@ -172,12 +273,18 @@ app.post('/api/signup', async (req, res) => {
          secuQuestion1, secuAns1, secuQuestion2, secuAns2, secuQuestion3, secuAns3)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
+
+    const codeToStore =
+      codeFromDB
+        ? codeFromDB
+        : (normPhoneCode ? NORMALIZE_CODE(normPhoneCode) : null);
+
     const params = [
       userID,
       username ?? null,
       hashed,
       email ?? null,
-      normPhoneCode ?? null,
+      codeToStore ?? null,
       normPhoneLocal ?? null,
       secuQuestion1 ?? null,
       secuAns1 ?? null,
@@ -189,14 +296,13 @@ app.post('/api/signup', async (req, res) => {
 
     await pool.execute(sql, params);
 
-    // You could also store phoneE164 in another column if your schema has one.
+    // You could also store computedE164 into a dedicated column if your schema has one.
 
     return res.status(201).json({ userID });
   } catch (err) {
     const msg = (err && err.message) ? err.message : 'unknown_error';
-    const code = (err && err.code) ? err.code : null;
 
-    if (code === 'ER_DUP_ENTRY') {
+    if (err && err.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ error: 'duplicate_identifier' });
     }
     console.error('signup error:', err);
@@ -219,4 +325,3 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Server listening on http://0.0.0.0:${PORT}`);
 });
-``
