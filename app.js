@@ -6,10 +6,13 @@
 
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto'); // for encryption
+const mysql = require('mysql2/promise'); // MySQL connection
+const indexRouter = require('./routes/index');
 const bcrypt = require('bcryptjs');
-const { pool } = require('./db');          // use the single pool from ./db
-const { encryptField } = require('./encrypt'); // <<< add this
-// const cors = require('cors'); // optional
+const { pool } = require('./db'); // db.js should export a mysql2/promise pool
+// Optional: enable if you deploy behind proxies or need CORS
+// const cors = require('cors');
 
 const app = express();
 const PORT = 3000;
