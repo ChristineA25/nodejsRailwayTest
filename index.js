@@ -6,6 +6,10 @@ import bcrypt from 'bcryptjs';
 import { pool, pingDB } from './db.js';
 
 const app = express();
+
+const express = require('express');
+const { pool, pingDB } = require('./db');
+
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
 
