@@ -158,56 +158,114 @@ app.post('/signup', async (req, res) => {
  *   "secuQuestion3": "...", "secuAns3": "..."
  * }
  */
+
+// /api/signup
+const express = require('express');
+const path = require('path');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const { pool } = require('./db');
+
+const app = express();
+app.use(express.json());
+
+// ---------- small crypto helpers (AES-256-GCM) ----------
+function getFieldKey() {
+  const b64 = process.env.FIELD_ENC_KEY || '';
+  // Expect exactly 32 bytes after base64 decode
+  const key = Buffer.from(b64, 'base64');
+  if (key.length !== 32) {
+    throw new Error('FIELD_ENC_KEY must be a base64-encoded 32-byte key (AES-256)');
+  }
+  return key;
+}
+function encryptField(plain) {
+  if (plain == null) return null;
+  const key = getFieldKey();
+  const iv = crypto.randomBytes(12); // GCM nonce
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const enc = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  // Store as iv:tag:ciphertext (base64)
+  return `${iv.toString('base64')}:${tag.toString('base64')}:${enc.toString('base64')}`;
+}
+
+// ---------- health + static ----------
+app.get('/health', (req, res) => res.status(200).send('ok'));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// ---------- POST /api/signup ----------
+/**
+ * Expected JSON:
+ * {
+ *   "userID": "client-supplied id",
+ *   "identifierType": "username" | "email" | "phone",
+ *   // username mode:
+ *   "username": "chris",
+ *   // email mode:
+ *   "email": "me@example.com",
+ *   // phone mode (local only and country code separate):
+ *   "phone_country_code": "+44",
+ *   "phone_number": "7123456789",         // local digits only (no '+' and no spaces)
+ *   // Password (required in all modes):
+ *   "password": "Passw0rd!123",
+ *   // Optional security questions:
+ *   "secuQuestion1": "...", "secuAns1": "...",
+ *   "secuQuestion2": "...", "secuAns2": "...",
+ *   "secuQuestion3": "...", "secuAns3": "..."
+ * }
+ */
 app.post('/api/signup', async (req, res) => {
   try {
     const {
       userID,
+      identifierType,
       username,
       email,
-      password,
-      // Preferred (new) keys coming from Flutter
-      phoneCountryISO2,
-      phoneCountryCode,
-      phoneLocal,
-      phoneE164,
-      // Legacy keys (older client)
       phone_country_code,
-      phone_number,
-      // Security Q&As
+      phone_number, // local
+      password,
       secuQuestion1, secuAns1,
       secuQuestion2, secuAns2,
       secuQuestion3, secuAns3,
     } = req.body || {};
 
-    // -------- Basic validation --------
-    if (userID === undefined || userID === null || userID === '') {
+    // ---------- basic validation ----------
+    if (!userID && userID !== 0) {
       return res.status(400).json({ error: 'userID_required' });
     }
     if (!password) {
       return res.status(400).json({ error: 'password_required' });
     }
+    if (!identifierType || !['username', 'email', 'phone'].includes(String(identifierType))) {
+      return res.status(400).json({ error: 'identifierType_invalid' });
+    }
 
-    // Normalize phone fields (support both new + legacy keys)
-    const normPhoneCode =
-      (typeof phoneCountryCode === 'string' && phoneCountryCode.trim()) ||
-      (typeof phone_country_code === 'string' && phone_country_code.trim()) ||
-      null;
+    // ---------- mode-specific validation ----------
+    let usernameToStore = null;
+    let emailEnc = null;
+    let phoneCodeToStore = null;
+    let phoneLocalEnc = null;
 
-    const normPhoneLocal =
-      (typeof phoneLocal === 'string' && phoneLocal.trim()) ||
-      (typeof phone_number === 'string' && phone_number.trim()) ||
-      null;
+    if (identifierType === 'username') {
+      if (!username) return res.status(400).json({ error: 'username_required' });
+      usernameToStore = String(username);
+    } else if (identifierType === 'email') {
+      if (!email) return res.status(400).json({ error: 'email_required' });
+      emailEnc = encryptField(String(email).trim());
+    } else if (identifierType === 'phone') {
+      if (!phone_country_code) return res.status(400).json({ error: 'phone_country_code_required' });
+      if (!phone_number || !/^\d{1,20}$/.test(String(phone_number))) {
+        return res.status(400).json({ error: 'phone_number_digits_only' });
+      }
+      phoneCodeToStore = String(phone_country_code).trim();     // plain
+      phoneLocalEnc = encryptField(String(phone_number).trim()); // encrypted
+    }
 
-    // (Optional) sanity: ensure digits-only for local if provided
-    const localDigitsOnly = normPhoneLocal && /^\d{1,20}$/.test(normPhoneLocal);
-    if (normPhoneLocal && !localDigitsOnly) {
-      return res.status(400).json({ error: 'phone_local_digits_only' });
-}
-
-    // Hash password
+    // ---------- hash password ----------
     const hashed = await bcrypt.hash(String(password), 12);
 
-    // Build final params for DB insert
+    // ---------- insert (write only correct columns) ----------
     const sql = `
       INSERT INTO loginTable
         (userID, username, password, email, phone_country_code, phone_number,
@@ -216,34 +274,37 @@ app.post('/api/signup', async (req, res) => {
     `;
     const params = [
       userID,
-      username ?? null,
+      usernameToStore,
       hashed,
-      email ?? null,
-      normPhoneCode ?? null,
-      normPhoneLocal ?? null,
-      secuQuestion1 ?? null,
-      secuAns1 ?? null,
-      secuQuestion2 ?? null,
-      secuAns2 ?? null,
-      secuQuestion3 ?? null,
-      secuAns3 ?? null,
+      emailEnc,
+      phoneCodeToStore,
+      phoneLocalEnc,
+      secuQuestion1 ?? null, secuAns1 ?? null,
+      secuQuestion2 ?? null, secuAns2 ?? null,
+      secuQuestion3 ?? null, secuAns3 ?? null,
     ];
 
     await pool.execute(sql, params);
-
-    // You could also store phoneE164 in another column if your schema has one.
-
     return res.status(201).json({ userID });
   } catch (err) {
-    const msg = (err && err.message) ? err.message : 'unknown_error';
-    const code = (err && err.code) ? err.code : null;
-
+    const code = err && err.code ? err.code : null;
     if (code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ error: 'duplicate_identifier' });
     }
     console.error('signup error:', err);
-    return res.status(500).json({ error: msg });
+    return res.status(500).json({ error: 'server_error' });
   }
+});
+
+// ---------- 404 fallback ----------
+app.use((req, res) => {
+  res.status(404).type('text').send('404 – Not Found');
+});
+
+// ---------- start ----------
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Server listening on http://0.0.0.0:${PORT}`);
 });
 
 // 404 handler
