@@ -11,6 +11,7 @@ const mysql = require('mysql2/promise'); // MySQL connection
 const indexRouter = require('./routes/index');
 const bcrypt = require('bcryptjs');
 const { pool } = require('./db'); // db.js should export a mysql2/promise pool
+const { pool, pingDB } = require('./db');
 // Optional: enable if you deploy behind proxies or need CORS
 // const cors = require('cors');
 
