@@ -11,7 +11,7 @@ const express = require('express');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
-const { pool } = require('./db'); // mysql2/promise pool
+const { pool } = require('./db');
 
 const app = express();
 app.use(express.json({ limit: '10kb' }));
@@ -37,25 +37,28 @@ try {
 }
 
 /* ------------------------------------------------------------------ */
-/*                      Deterministic “Tokenization”                   */
+/*                   Deterministic Tokenization                        */
 /* ------------------------------------------------------------------ */
 function detTokenBase64(plain) {
   if (plain === null || plain === undefined) return null;
   if (!DET_KEY) throw new Error('DETERMINISTIC_KEY_missing');
-  const mac = crypto.createHmac('sha256', DET_KEY)
+  const mac = crypto.createHmac('sha256', DET.createHmac)
     .update(String(plain), 'utf8')
     .digest();
   return mac.toString('base64');
 }
 
 /* ------------------------------------------------------------------ */
-/*                        Normalization Helpers                        */
+/*                        Email Normalization                          */
 /* ------------------------------------------------------------------ */
 function normalizeEmail(email) {
   if (!email) return null;
   return String(email).trim().toLowerCase();
 }
 
+/* ------------------------------------------------------------------ */
+/*                        Build E164                                   */
+/* ------------------------------------------------------------------ */
 function buildE164({ phoneE164, phone_country_code, phone_number }) {
   const isValidE164 = (v) => typeof v === 'string' && /^\+\d{6,15}$/.test(v);
 
@@ -76,7 +79,7 @@ function buildE164({ phoneE164, phone_country_code, phone_number }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*                         Health & Static                             */
+/*                          Health & Static                            */
 /* ------------------------------------------------------------------ */
 app.get('/health', (req, res) => res.status(200).send('ok'));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -86,7 +89,6 @@ try {
   const indexRouter = require('./routes/index');
   app.use('/', indexRouter);
   indexRouterMounted = true;
-  console.log('✅ indexRouter mounted');
 } catch (err) {
   console.error('❌ Failed to load ./routes/index:', err.message);
 }
@@ -104,9 +106,8 @@ app.post('/api/signup', async (req, res) => {
       secuQuestion1, secuAns1, secuQuestion2, secuAns2, secuQuestion3, secuAns3
     } = req.body || {};
 
-    // Basic validation
-    if (!userID)    return res.status(400).json({ error: 'userID_required' });
-    if (!password)  return res.status(400).json({ error: 'password_required' });
+    if (!userID) return res.status(400).json({ error: 'userID_required' });
+    if (!password) return res.status(400).json({ error: 'password_required' });
 
     if (identifierType === 'username' && !username) {
       return res.status(400).json({ error: 'username_required' });
@@ -118,10 +119,9 @@ app.post('/api/signup', async (req, res) => {
       return res.status(400).json({ error: 'phone_number_required' });
     }
 
-    // Hash password
     const passwordHash = await bcrypt.hash(String(password), 12);
 
-    // Tokenize email/phone
+    // email & phone tokenization
     let emailEnc = null;
     let phoneEnc = null;
     let phoneE164Final = null;
@@ -136,15 +136,15 @@ app.post('/api/signup', async (req, res) => {
         phoneE164Final = buildE164({
           phoneE164,
           phone_country_code,
-          phone_number
+          phone_number,
         });
         phoneEnc = detTokenBase64(phoneE164Final);
       }
-    } catch (tokErr) {
-      return res.status(500).json({ error: tokErr.message || 'tokenization_failed' });
+    } catch (errTok) {
+      return res.status(500).json({ error: errTok.message || 'tokenization_failed' });
     }
 
-    // Insert
+    // Insert in DB
     const sql = `
       INSERT INTO loginTable
         (userID, username, password, phone_country_code,
@@ -172,7 +172,7 @@ app.post('/api/signup', async (req, res) => {
     return res.status(201).json({ userID });
 
   } catch (err) {
-    const msg  = err?.message || 'unknown_error';
+    const msg = err?.message || 'unknown_error';
     const code = err?.code || null;
 
     if (code === 'ER_DUP_ENTRY') {
@@ -182,20 +182,21 @@ app.post('/api/signup', async (req, res) => {
       if (raw.includes('email_enc')) field = 'email';
       else if (raw.includes('phone_number_enc')) field = 'phone';
       else if (raw.includes('username')) field = 'username';
-
-      // NEW: detect duplicate security answers
-      else if (raw.includes('secuans1') || raw.includes('secuans2') || raw.includes('secuans3')) field = 'security_answer';
-      /*else if (raw.includes('secuans1') || raw.includes('secuans2') || raw.includes('secuans3')) {
+      else if (raw.includes('secuans1') || raw.includes('secuans2') || raw.includes('secuans3')) {
+        // ⚠️ Your chosen OPTION B
         return res.status(409).json({
           error: 'duplicate_security_answer',
           field: 'security_answer',
-          message: 'security question answer already in use. Please fill in another answers.'
+          message: 'Security answer already in use. Please choose another answer.'
         });
-      }*/
+      }
 
-      // Default duplicate response
-      const message = `${field} already in use. Please use another or use other provided options to sign up`;
-      return res.status(409).json({ error: 'duplicate_identifier', field, message });
+      // Default
+      return res.status(409).json({
+        error: 'duplicate_identifier',
+        field,
+        message: `${field} already in use. Please use another.`
+      });
     }
 
     return res.status(500).json({ error: msg });
@@ -203,12 +204,12 @@ app.post('/api/signup', async (req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
-/*                          404 Fallback                               */
+/*                           404                                       */
 /* ------------------------------------------------------------------ */
 app.use((req, res) => {
   const fallback404 = path.join(__dirname, 'views', '404.html');
-  res.status(404).sendFile(fallback404, (sendErr) => {
-    if (sendErr) res.status(404).type('text').send('404 – Not Found');
+  res.status(404).sendFile(fallback404, (err) => {
+    if (err) res.status(404).type('text').send('404 – Not Found');
   });
 });
 
@@ -217,8 +218,5 @@ app.use((req, res) => {
 /* ------------------------------------------------------------------ */
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Server listening on http://0.0.0.0:${PORT}`);
-  if (!indexRouterMounted) {
-    console.warn('⚠️ indexRouter was not mounted. Only static files and /health + /api/signup are active.');
-  }
+  console.log(`Server on ${PORT}`);
 });
