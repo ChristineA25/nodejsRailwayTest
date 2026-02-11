@@ -183,14 +183,15 @@ app.post('/api/signup', async (req, res) => {
       else if (raw.includes('phone_number_enc')) field = 'phone';
       else if (raw.includes('username')) field = 'username';
 
-      // 🔥 NEW: detect duplicate security answers
-      else if (raw.includes('secuans1') || raw.includes('secuans2') || raw.includes('secuans3')) {
+      // NEW: detect duplicate security answers
+      else if (raw.includes('secuans1') || raw.includes('secuans2') || raw.includes('secuans3')) field = 'security_answer';
+      /*else if (raw.includes('secuans1') || raw.includes('secuans2') || raw.includes('secuans3')) {
         return res.status(409).json({
           error: 'duplicate_security_answer',
           field: 'security_answer',
           message: 'security question answer already in use. Please fill in another answers.'
         });
-      }
+      }*/
 
       // Default duplicate response
       const message = `${field} already in use. Please use another or use other provided options to sign up`;
