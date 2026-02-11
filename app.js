@@ -182,7 +182,7 @@ app.post('/api/signup', async (req, res) => {
       if (raw.includes('email_enc')) field = 'email';
       else if (raw.includes('phone_number_enc')) field = 'phone';
       else if (raw.includes('username')) field = 'username';
-      else if (raw.includes('secuans1') || raw.includes('secuans2') || raw.includes('secuans3')) field = 'security answer';
+      else if (raw.includes('secuAns1') || raw.includes('secuAns2') || raw.includes('secuAns3')) field = 'security answer';
 
       // Default
       return res.status(409).json({
