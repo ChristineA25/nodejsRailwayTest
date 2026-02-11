@@ -1,8 +1,8 @@
 
 {
   "name": "nodejs-railway-test",
-  "version": "1.0.1",
-  "type": "common.js",
+  "version": "1.0.2",
+  "type": "commonjs",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
