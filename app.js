@@ -182,14 +182,7 @@ app.post('/api/signup', async (req, res) => {
       if (raw.includes('email_enc')) field = 'email';
       else if (raw.includes('phone_number_enc')) field = 'phone';
       else if (raw.includes('username')) field = 'username';
-      else if (raw.includes('secuans1') || raw.includes('secuans2') || raw.includes('secuans3')) {
-        // ⚠️ Your chosen OPTION B
-        return res.status(409).json({
-          error: 'duplicate_security_answer',
-          field: 'security_answer',
-          message: 'Security answer already in use. Please choose another answer.'
-        });
-      }
+      else if (raw.includes('secuans1') || raw.includes('secuans2') || raw.includes('secuans3')) field = 'security answer';
 
       // Default
       return res.status(409).json({
