@@ -1,19 +1,20 @@
 
-// index.js (ESM)
-import express from 'express';
-import cors from 'cors';
-import bcrypt from 'bcryptjs';
-import { pool, pingDB } from './db.js';
+// index.js (CommonJS) — single server entry
+const express = require('express');
+const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const path = require('path');
+const { pool, pingDB } = require('./db');
 
 const app = express();
 
-const express = require('express');
-const { pool, pingDB } = require('./db');
-
+// ---------- middleware ----------
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
+app.use(express.static(path.join(__dirname, 'public')));
 
-// Optional: simple API key gate (set API_KEY in Railway Variables)
+// ---------- optional API key gate ----------
 const API_KEY = process.env.API_KEY;
 app.use((req, res, next) => {
   if (!API_KEY) return next(); // allow all if not configured
@@ -22,7 +23,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Root & health
+// ---------- root & health ----------
 app.get('/', (_req, res) => res.send('API is running'));
 app.get('/health', async (_req, res) => {
   try {
@@ -33,6 +34,7 @@ app.get('/health', async (_req, res) => {
   }
 });
 
+// ---------- helpers ----------
 /** Normalize to canonical '+<digits>' (e.g., '+ 1-264' -> '+1264') */
 function normalizeCode(s) {
   const raw = String(s ?? '');
@@ -43,7 +45,29 @@ function normalizeCode(s) {
   return '+' + digits.slice(1).replace(/\D/g, '');
 }
 
-// --- PHONE: regions from MySQL (preserving your query & mapping) ---
+// Small crypto helpers (AES-256-GCM) for field-level encryption of PII
+function getFieldKey() {
+  const b64 = process.env.FIELD_ENC_KEY || '';
+  const key = Buffer.from(b64, 'base64'); // must decode to 32 bytes
+  if (key.length !== 32) {
+    throw new Error('FIELD_ENC_KEY must be a base64-encoded 32-byte key (AES-256)');
+  }
+  return key;
+}
+function encryptField(plain) {
+  if (plain == null) return null;
+  const key = getFieldKey();
+  const iv = crypto.randomBytes(12); // GCM nonce
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const enc = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  // Store as iv:tag:ciphertext (base64)
+  return `${iv.toString('base64')}:${tag.toString('base64')}:${enc.toString('base64')}`;
+}
+
+// ============================================================================
+// PHONE: regions from MySQL (preserving your mapping)
+// ============================================================================
 app.get('/phone/regions', async (_req, res) => {
   try {
     const [rows] = await pool.query(`
@@ -64,8 +88,8 @@ app.get('/phone/regions', async (_req, res) => {
       return {
         iso2,
         name: String(r.name ?? '').trim(),
-        code,          // e.g. '+44'
-        displayCode,   // e.g. '+ 1-264'
+        code,        // e.g. '+44'
+        displayCode, // e.g. '+ 1-264'
         min: Number(r.minLen ?? 0),
         max: Number(r.maxLen ?? 0),
       };
@@ -77,7 +101,7 @@ app.get('/phone/regions', async (_req, res) => {
   }
 });
 
-// --- PHONE: validate local number against a region ---
+// Validate local phone number for a region; return E.164 if valid
 app.post('/phone/validate', async (req, res) => {
   try {
     const iso2Req = String(req.body?.iso2 ?? '').trim().toUpperCase();
@@ -110,7 +134,9 @@ app.post('/phone/validate', async (req, res) => {
   }
 });
 
-// --- SHOPS / BRANDS / ITEMS / COLORS (kept from your file) ---
+// ============================================================================
+// SHOPS / BRANDS / ITEMS / COLORS
+// ============================================================================
 app.get('/shops', async (_req, res) => {
   try {
     const [rows] = await pool.query(
@@ -235,7 +261,9 @@ app.get('/item-colors', async (req, res) => {
   }
 });
 
-// --- Simple test insert (unchanged) ---
+// ============================================================================
+// TEST insert
+// ============================================================================
 app.post('/add', async (req, res) => {
   const { testing } = req.body ?? {};
   if (!testing) return res.status(400).json({ error: 'Field "testing" is required.' });
@@ -248,62 +276,116 @@ app.post('/add', async (req, res) => {
   }
 });
 
-// --- SIGNUP (fixed) ---
-app.post('/signup', async (req, res) => {
+// ============================================================================
+// SIGNUP — client supplies userID (from Flutter). Hash password; encrypt PII.
+// ============================================================================
+/**
+ * Expected JSON (one of username/email/phone required):
+ * {
+ *   "userID": "client-supplied id",
+ *   "identifierType": "username" | "email" | "phone",
+ *   "username": "chris",                // when identifierType = username
+ *   "email": "me@example.com",          // when identifierType = email
+ *   "phone_country_code": "+44",        // when identifierType = phone
+ *   "phone_number": "7123456789",       // digits only (no spaces)
+ *   "password": "Passw0rd!123",
+ *   "secuQuestion1": "...", "secuAns1": "...",
+ *   "secuQuestion2": "...", "secuAns2": "...",
+ *   "secuQuestion3": "...", "secuAns3": "..."
+ * }
+ */
+app.post('/api/signup', async (req, res) => {
   try {
     const {
+      userID,
+      identifierType,
       username,
       email,
-      password,            // from Flutter client
-      phone_country_code,  // digits only, e.g. "678"
-      phone_number,        // digits only
-      q1, a1, q2, a2, q3, a3,
-    } = req.body;
+      phone_country_code,
+      phone_number, // local digits only
+      password,
+      secuQuestion1, secuAns1,
+      secuQuestion2, secuAns2,
+      secuQuestion3, secuAns3,
+    } = req.body || {};
 
-    if (!password || password.length < 8) {
-      return res.status(400).json({ error: 'Weak or missing password' });
+    if (!userID && userID !== 0) {
+      return res.status(400).json({ error: 'userID_required' });
+    }
+    if (!password) {
+      return res.status(400).json({ error: 'password_required' });
+    }
+    if (!identifierType || !['username', 'email', 'phone'].includes(String(identifierType))) {
+      return res.status(400).json({ error: 'identifierType_invalid' });
     }
 
-    // Allow any one identifier; if none given, derive from phone
-    let finalUsername = username ?? null;
-    const finalEmail = email ?? null;
-    if (!finalUsername && !finalEmail && phone_country_code && phone_number) {
-      finalUsername = `u_${phone_country_code}_${phone_number}`;
-    }
-    if (!finalUsername && !finalEmail) {
-      return res.status(400).json({ error: 'Provide username, email, or phone' });
+    // mode-specific validation & preparation
+    let usernameToStore = null;
+    let emailEnc = null;
+    let phoneCodeToStore = null;
+    let phoneLocalEnc = null;
+
+    if (identifierType === 'username') {
+      if (!username) return res.status(400).json({ error: 'username_required' });
+      usernameToStore = String(username);
+    } else if (identifierType === 'email') {
+      if (!email) return res.status(400).json({ error: 'email_required' });
+      emailEnc = encryptField(String(email).trim());
+    } else if (identifierType === 'phone') {
+      if (!phone_country_code) return res.status(400).json({ error: 'phone_country_code_required' });
+      if (!phone_number || !/^\d{1,20}$/.test(String(phone_number))) {
+        return res.status(400).json({ error: 'phone_number_digits_only' });
+      }
+      phoneCodeToStore = String(phone_country_code).trim();       // store plain code
+      phoneLocalEnc = encryptField(String(phone_number).trim());  // encrypt local digits
     }
 
-    // Hash password (bcryptjs)
-    const hashed = await bcrypt.hash(password, 10);
+    // hash password
+    const hashed = await bcrypt.hash(String(password), 12);
 
-    // Insert into loginTable (store hashed in 'password' column)
+    // insert
     const sql = `
       INSERT INTO loginTable
-        (username, password, email, phone_country_code, phone_number, secuQuestion1, secuAns1, secuQuestion2, secuAns2, secuQuestion3, secuAns3)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (userID, username, password, email, phone_country_code, phone_number,
+         secuQuestion1, secuAns1, secuQuestion2, secuAns2, secuQuestion3, secuAns3)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     const params = [
-      finalUsername,
+      userID,
+      usernameToStore,
       hashed,
-      finalEmail,
-      phone_country_code ?? null,
-      phone_number ?? null,
-      q1 ?? null, a1 ?? null,
-      q2 ?? null, a2 ?? null,
-      q3 ?? null, a3 ?? null,
+      emailEnc,
+      phoneCodeToStore,
+      phoneLocalEnc,
+      secuQuestion1 ?? null, secuAns1 ?? null,
+      secuQuestion2 ?? null, secuAns2 ?? null,
+      secuQuestion3 ?? null, secuAns3 ?? null,
     ];
 
-    const [result] = await pool.query(sql, params);
-    return res.status(201).json({ userID: result.insertId });
+    await pool.execute(sql, params);
+    return res.status(201).json({ userID });
   } catch (err) {
-    if (err && err.code === 'ER_DUP_ENTRY') {
-      return res.status(409).json({ error: 'Identifier already exists' });
+    const code = err && err.code ? err.code : null;
+    if (code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'duplicate_identifier' });
     }
-    console.error('Signup error:', err); // keep for diagnostics
-    return res.status(500).json({ error: 'Server error' });
+    console.error('signup error:', err);
+    return res.status(500).json({ error: 'server_error' });
   }
 });
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Server running on port ${port}`));
+// ---------- 404 fallback ----------
+app.use((req, res) => {
+  const fallback404 = path.join(__dirname, 'views', '404.html');
+  res.status(404).sendFile(fallback404, (sendErr) => {
+    if (sendErr) {
+      res.status(404).type('text').send('404 – Not Found');
+    }
+  });
+});
+
+// ---------- start server ----------
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Server listening on http://0.0.0.0:${PORT}`);
+});
