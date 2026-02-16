@@ -73,6 +73,52 @@ app.get('/phone/regions', async (_req, res) => {
   }
 });
 
+// --- Location lookups: counties, districts, postcodes ---
+// --- DIRECT ROUTE (for now, to verify path works) ---
+app.get('/api/counties', (req, res) => {
+  console.log('Hit GET /api/counties');
+  // Return something simple first to prove the route works
+  res.json([{ code: 'BNES', name: 'Bath and North East Somerset' }]);
+});
+
+
+app.get('/api/districts', async (req, res) => {
+  try {
+    const { county } = req.query;
+    if (!county) return res.status(400).json({ error: 'county_required' });
+
+    const [rows] = await pool.execute(
+      `SELECT DISTINCT district 
+         FROM gbrPostcodeNameSake 
+        WHERE county = ? AND district IS NOT NULL AND district <> '' 
+        ORDER BY district ASC`,
+      [county]
+    );
+    res.json({ items: rows.map(r => r.district) });
+  } catch (e) {
+    res.status(500).json({ error: 'districts_fetch_failed' });
+  }
+});
+
+app.get('/api/postcodes', async (req, res) => {
+  try {
+    const { county, district } = req.query;
+    if (!county)   return res.status(400).json({ error: 'county_required' });
+    if (!district) return res.status(400).json({ error: 'district_required' });
+
+    const [rows] = await pool.execute(
+      `SELECT DISTINCT postcode 
+         FROM gbrPostcodeNameSake 
+        WHERE county = ? AND district = ? AND postcode IS NOT NULL AND postcode <> '' 
+        ORDER BY postcode ASC`,
+      [county, district]
+    );
+    res.json({ items: rows.map(r => r.postcode) });
+  } catch (e) {
+    res.status(500).json({ error: 'postcodes_fetch_failed' });
+  }
+});
+
 // --- PHONE: validate local number against a region ---
 app.post('/phone/validate', async (req, res) => {
   try {
