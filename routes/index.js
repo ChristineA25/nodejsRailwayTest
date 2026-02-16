@@ -98,6 +98,24 @@ app.get('/phone/regions', async (_req, res) => {
   }
 });
 
+// --- ALLERGENS: distinct common names ---
+app.get('/api/allergens', async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT DISTINCT allergenCommonName AS name
+         FROM commonAllergen
+        WHERE allergenCommonName IS NOT NULL
+          AND allergenCommonName <> ''
+        ORDER BY allergenCommonName ASC`
+    );
+    const items = rows.map(r => (r.name ?? '').toString().trim()).filter(Boolean);
+    res.json({ items });
+  } catch (e) {
+    console.error('Error in /api/allergens:', e);
+    res.status(500).json({ error: 'allergens_fetch_failed' });
+  }
+});
+
 // ---- PHONE: validate local number against a region --------------------------
 // Expects: { iso2: 'GB', local: '7123456789' }
 // Returns: { valid: boolean, e164?: '+447123456789' }
