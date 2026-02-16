@@ -62,6 +62,107 @@ app.get('/health', async (_req, res) => {
 });
 
 
+// --- ITEM SEARCH (new): GET /api/items-search --------------------------------
+app.get('/api/items-search', async (req, res) => {
+  try {
+    const { q, brand, color, limit } = req.query;
+    const MAX_LIMIT = 100;
+    const lim = Math.min(Number(limit || 50), MAX_LIMIT);
+
+    const where = [];
+    const params = [];
+
+    if (q) {
+      const like = `%${String(q).trim().toLowerCase()}%`;
+      where.push(`(
+        LOWER(name) LIKE ? OR
+        LOWER(brand) LIKE ? OR
+        LOWER(feature) LIKE ? OR
+        LOWER(productColor) LIKE ?
+      )`);
+      params.push(like, like, like, like);
+    }
+    if (brand) { where.push('brand = ?'); params.push(String(brand)); }
+    if (color) {
+      where.push('LOWER(productColor) LIKE ?');
+      params.push(`%${String(color).toLowerCase()}%`);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const sql = `
+      SELECT id, name, brand, quantity, feature, productColor, picWebsite, date
+      FROM item
+      ${whereSql}
+      ORDER BY name ASC
+      LIMIT ?
+    `;
+    params.push(lim);
+
+    const [rows] = await pool.query(sql, params);
+    return res.json({ items: rows });
+  } catch (e) {
+    console.error('Error in /api/items-search:', e);
+    return res.status(500).json({ error: 'items_search_failed' });
+  }
+});
+
+// --- BLACKLIST (same three endpoints as above) --------------------------------
+app.get('/api/blacklist', async (req, res) => {
+  try {
+    const userId = String(req.query.userId || '').trim();
+    if (!userId) return res.status(400).json({ error: 'userId_required' });
+
+    const [rows] = await pool.query(`
+      SELECT i.id, i.name, i.brand, i.quantity, i.feature, i.productColor, i.picWebsite, i.date
+      FROM user_blacklist ub
+      JOIN item i ON i.id = ub.itemId
+      WHERE ub.userId = ?
+      ORDER BY i.name ASC
+    `, [userId]);
+
+    return res.json({ items: rows });
+  } catch (e) {
+    console.error('Error in GET /api/blacklist:', e);
+    return res.status(500).json({ error: 'blacklist_fetch_failed' });
+  }
+});
+
+app.post('/api/blacklist', async (req, res) => {
+  try {
+    const userId = String(req.body?.userId || '').trim();
+    const itemId = String(req.body?.itemId || '').trim();
+    if (!userId || !itemId) return res.status(400).json({ error: 'userId_and_itemId_required' });
+
+    await pool.query(
+      `INSERT INTO user_blacklist (userId, itemId) VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE itemId = VALUES(itemId)`,
+      [userId, itemId]
+    );
+    return res.status(201).json({ ok: true });
+  } catch (e) {
+    console.error('Error in POST /api/blacklist:', e);
+    return res.status(500).json({ error: 'blacklist_add_failed' });
+  }
+});
+
+app.delete('/api/blacklist', async (req, res) => {
+  try {
+    const userId = String(req.query.userId || '').trim();
+    const itemId = String(req.query.itemId || '').trim();
+    if (!userId || !itemId) return res.status(400).json({ error: 'userId_and_itemId_required' });
+
+    const [result] = await pool.query(
+      `DELETE FROM user_blacklist WHERE userId = ? AND itemId = ?`,
+      [userId, itemId]
+    );
+    return res.json({ ok: true, deleted: result.affectedRows });
+  } catch (e) {
+    console.error('Error in DELETE /api/blacklist:', e);
+    return res.status(500).json({ error: 'blacklist_remove_failed' });
+  }
+});
+
+
 // --- ITEM SEARCH (new): GET /api/items-search -------------------------------
 app.get('/api/items-search', async (req, res) => {
   try {
