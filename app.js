@@ -196,6 +196,57 @@ app.post('/api/signup', async (req, res) => {
   }
 });
 
+
+// --- Location lookups: counties, districts, postcodes ---
+app.get('/api/counties', async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT DISTINCT county FROM gbrPostcodeNameSake WHERE county IS NOT NULL AND county <> '' ORDER BY county ASC`
+    );
+    res.json({ items: rows.map(r => r.county) });
+  } catch (e) {
+    res.status(500).json({ error: 'counties_fetch_failed' });
+  }
+});
+
+app.get('/api/districts', async (req, res) => {
+  try {
+    const { county } = req.query;
+    if (!county) return res.status(400).json({ error: 'county_required' });
+
+    const [rows] = await pool.execute(
+      `SELECT DISTINCT district 
+         FROM gbrPostcodeNameSake 
+        WHERE county = ? AND district IS NOT NULL AND district <> '' 
+        ORDER BY district ASC`,
+      [county]
+    );
+    res.json({ items: rows.map(r => r.district) });
+  } catch (e) {
+    res.status(500).json({ error: 'districts_fetch_failed' });
+  }
+});
+
+app.get('/api/postcodes', async (req, res) => {
+  try {
+    const { county, district } = req.query;
+    if (!county)   return res.status(400).json({ error: 'county_required' });
+    if (!district) return res.status(400).json({ error: 'district_required' });
+
+    const [rows] = await pool.execute(
+      `SELECT DISTINCT postcode 
+         FROM gbrPostcodeNameSake 
+        WHERE county = ? AND district = ? AND postcode IS NOT NULL AND postcode <> '' 
+        ORDER BY postcode ASC`,
+      [county, district]
+    );
+    res.json({ items: rows.map(r => r.postcode) });
+  } catch (e) {
+    res.status(500).json({ error: 'postcodes_fetch_failed' });
+  }
+});
+
+
 /* ------------------------------------------------------------------ */
 /*                           404                                       */
 /* ------------------------------------------------------------------ */
