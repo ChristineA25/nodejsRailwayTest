@@ -39,6 +39,66 @@ function normalizeCode(s) {
   return '+' + digits.slice(1).replace(/\D/g, '');
 }
 
+// --- BLACKLIST: GET /api/blacklist?userId=... --------------------------------
+app.get('/api/blacklist', async (req, res) => {
+  try {
+    const userId = String(req.query.userId || '').trim();
+    if (!userId) return res.status(400).json({ error: 'userId_required' });
+
+    const [rows] = await pool.query(`
+      SELECT i.id, i.name, i.brand, i.quantity, i.feature, i.productColor, i.picWebsite, i.date
+      FROM user_blacklist ub
+      JOIN item i ON i.id = ub.itemId
+      WHERE ub.userId = ?
+      ORDER BY i.name ASC
+    `, [userId]);
+
+    return res.json({ items: rows });
+  } catch (e) {
+    console.error('Error in GET /api/blacklist:', e);
+    return res.status(500).json({ error: 'blacklist_fetch_failed' });
+  }
+});
+
+
+// --- BLACKLIST: ADD (POST /api/blacklist) -----------------------------------
+app.post('/api/blacklist', async (req, res) => {
+  try {
+    const userId = String(req.body?.userId || '').trim();
+    const itemId = String(req.body?.itemId || '').trim();
+    if (!userId || !itemId) return res.status(400).json({ error: 'userId_and_itemId_required' });
+
+    // INSERT IGNORE pattern via ON DUPLICATE KEY: rely on unique(userId, itemId)
+    await pool.query(
+      `INSERT INTO user_blacklist (userId, itemId) VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE itemId = VALUES(itemId)`,
+      [userId, itemId]
+    );
+    return res.status(201).json({ ok: true });
+  } catch (e) {
+    console.error('Error in POST /api/blacklist:', e);
+    return res.status(500).json({ error: 'blacklist_add_failed' });
+  }
+});
+
+// --- BLACKLIST: REMOVE (DELETE /api/blacklist?userId=...&itemId=...) ---------
+app.delete('/api/blacklist', async (req, res) => {
+  try {
+    const userId = String(req.query.userId || '').trim();
+    const itemId = String(req.query.itemId || '').trim();
+    if (!userId || !itemId) return res.status(400).json({ error: 'userId_and_itemId_required' });
+
+    const [result] = await pool.query(
+      `DELETE FROM user_blacklist WHERE userId = ? AND itemId = ?`,
+      [userId, itemId]
+    );
+    return res.json({ ok: true, deleted: result.affectedRows });
+  } catch (e) {
+    console.error('Error in DELETE /api/blacklist:', e);
+    return res.status(500).json({ error: 'blacklist_remove_failed' });
+  }
+});
+
 // --- ALLERGENS: distinct common names ---
 app.get('/api/allergens', async (_req, res) => {
   try {
