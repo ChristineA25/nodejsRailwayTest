@@ -73,14 +73,18 @@ app.get('/phone/regions', async (_req, res) => {
   }
 });
 
-// --- Location lookups: counties, districts, postcodes ---
-// --- DIRECT ROUTE (for now, to verify path works) ---
-app.get('/api/counties', (req, res) => {
-  console.log('Hit GET /api/counties');
-  // Return something simple first to prove the route works
-  res.json([{ code: 'BNES', name: 'Bath and North East Somerset' }]);
-});
 
+// --- Location lookups: counties, districts, postcodes ---
+app.get('/api/counties', async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT DISTINCT county FROM gbrPostcodeNameSake WHERE county IS NOT NULL AND county <> '' ORDER BY county ASC`
+    );
+    res.json({ items: rows.map(r => r.county) });
+  } catch (e) {
+    res.status(500).json({ error: 'counties_fetch_failed' });
+  }
+});
 
 app.get('/api/districts', async (req, res) => {
   try {
