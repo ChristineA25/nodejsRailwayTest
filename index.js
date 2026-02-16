@@ -39,6 +39,63 @@ function normalizeCode(s) {
   return '+' + digits.slice(1).replace(/\D/g, '');
 }
 
+
+// --- ITEMS: search the `item` table (fetch-only) ----------------------------
+// GET /api/items/search?q=...&field=all|name|brand|quantity|feature|productcolor&limit=50
+app.get('/api/items/search', async (req, res) => {
+  try {
+    const q = String(req.query.q ?? '').trim();
+    const field = String(req.query.field ?? 'all').toLowerCase();
+    const limit = Math.min(parseInt(String(req.query.limit ?? '50'), 10) || 50, 100);
+
+    const allow = new Set(['all','name','brand','quantity','feature','productcolor']);
+    if (!allow.has(field)) return res.status(400).json({ error: 'invalid_field' });
+
+    const where = [];
+    const params = [];
+
+    if (q) {
+      const like = `%${q}%`;
+      if (field === 'all') {
+        where.push(`(name LIKE ? OR brand LIKE ? OR quantity LIKE ? OR feature LIKE ? OR productColor LIKE ?)`);
+        params.push(like, like, like, like, like);
+      } else if (field === 'productcolor') {
+        where.push(`productColor LIKE ?`);
+        params.push(like);
+      } else {
+        where.push(`${field} LIKE ?`);
+        params.push(like);
+      }
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const sql = `
+      SELECT id, name, brand, quantity, feature, productColor, picWebsite
+      FROM item
+      ${whereSql}
+      ORDER BY name ASC, brand ASC
+      LIMIT ?
+    `;
+    params.push(limit);
+
+    const [rows] = await pool.query(sql, params);
+    const items = rows.map(r => ({
+      id: String(r.id ?? ''),
+      name: String(r.name ?? ''),
+      brand: String(r.brand ?? ''),
+      quantity: String(r.quantity ?? ''),
+      feature: String(r.feature ?? ''),
+      productColor: String(r.productColor ?? ''),
+      picWebsite: String(r.picWebsite ?? ''),
+    }));
+    return res.json({ items });
+  } catch (e) {
+    console.error('Error in /api/items/search:', e);
+    return res.status(500).json({ error: 'items_search_failed' });
+  }
+});
+
+
 // --- ALLERGENS: distinct common names ---
 app.get('/api/allergens', async (_req, res) => {
   try {
