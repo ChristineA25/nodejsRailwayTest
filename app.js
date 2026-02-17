@@ -93,6 +93,37 @@ try {
   console.error('❌ Failed to load ./routes/index:', err.message);
 }
 
+
+const express = require('express');
+const { pool } = require('./db'); // points to DB that has `item`
+const app = express();
+app.use(express.json());
+
+// POST /api/items/batchByIds
+app.post('/api/items/batchByIds', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : [];
+    if (ids.length === 0) return res.json({ items: [] });
+
+    // Build (?, ?, ...) placeholders safely
+    const placeholders = ids.map(() => '?').join(', ');
+    const sql = `
+      SELECT id, name, brand, quantity, feature, productColor, picWebsite
+      FROM item
+      WHERE id IN (${placeholders})
+    `;
+    const [rows] = await pool.execute(sql, ids);
+    res.json({ items: rows });
+  } catch (err) {
+    console.error('POST /api/items/batchByIds error:', err);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`items service on :${PORT}`));
+
+
 /* ------------------------------------------------------------------ */
 /*                             API: Signup                             */
 /* ------------------------------------------------------------------ */
