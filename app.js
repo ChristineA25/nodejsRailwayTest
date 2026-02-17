@@ -16,6 +16,11 @@ const { pool } = require('./db');
 const app = express();
 app.use(express.json({ limit: '10kb' }));
 
+// after other imports/middleware
+const itemsRouter = require('./routes/items');
+
+app.use('/api/items', itemsRouter);
+
 /* ------------------------------------------------------------------ */
 /*                          Key Management                             */
 /* ------------------------------------------------------------------ */
