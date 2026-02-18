@@ -4,7 +4,6 @@ if (process.env.NODE_ENV !== 'production') {
   try { require('dotenv').config(); } catch (_) {}
 }
 
-// app.js
 'use strict';
 
 const express = require('express');
@@ -16,9 +15,21 @@ const { pool } = require('./db');
 const app = express();
 app.use(express.json({ limit: '10kb' }));
 
-// after other imports/middleware
-const itemsRouter = require('./routes/items');
-
+/* ------------------------------------------------------------------ */
+/*                            Items Router                             */
+/* ------------------------------------------------------------------ */
+// Safe import: try ./routes/items first; if not present, fall back to ./routes/item
+let itemsRouter;
+try {
+  itemsRouter = require('./routes/items');
+} catch (e) {
+  try {
+    itemsRouter = require('./routes/item');
+  } catch (e2) {
+    console.error('❌ Failed to load items router from ./routes/items and ./routes/item');
+    throw e2;
+  }
+}
 app.use('/api/items', itemsRouter);
 
 /* ------------------------------------------------------------------ */
@@ -47,7 +58,8 @@ try {
 function detTokenBase64(plain) {
   if (plain === null || plain === undefined) return null;
   if (!DET_KEY) throw new Error('DETERMINISTIC_KEY_missing');
-  const mac = crypto.createHmac('sha256', DET.createHmac)
+  // FIX: use DET_KEY as the HMAC key
+  const mac = crypto.createHmac('sha256', DET_KEY)
     .update(String(plain), 'utf8')
     .digest();
   return mac.toString('base64');
@@ -62,7 +74,7 @@ function normalizeEmail(email) {
 }
 
 /* ------------------------------------------------------------------ */
-/*                        Build E164                                   */
+/*                           Build E164                                */
 /* ------------------------------------------------------------------ */
 function buildE164({ phoneE164, phone_country_code, phone_number }) {
   const isValidE164 = (v) => typeof v === 'string' && /^\+\d{6,15}$/.test(v);
@@ -98,14 +110,9 @@ try {
   console.error('❌ Failed to load ./routes/index:', err.message);
 }
 
-
-const express = require('express');
-const { pool } = require('./db'); // points to DB that has `item`
-const app = express();
-app.use(express.json());
-
-
-// Add to index.js (ESM) on the 53a4 service
+/* ------------------------------------------------------------------ */
+/*              Items: Batch fetch by IDs (kept as-is)                 */
+/* ------------------------------------------------------------------ */
 app.post('/api/items/batchByIds', async (req, res) => {
   try {
     const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : [];
@@ -135,11 +142,6 @@ app.post('/api/items/batchByIds', async (req, res) => {
     res.status(500).json({ error: 'server_error' });
   }
 });
-
-
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`items service on :${PORT}`));
-
 
 /* ------------------------------------------------------------------ */
 /*                             API: Signup                             */
@@ -230,9 +232,8 @@ app.post('/api/signup', async (req, res) => {
       if (raw.includes('email_enc')) field = 'email';
       else if (raw.includes('phone_number_enc')) field = 'phone';
       else if (raw.includes('username')) field = 'username';
-      else if (raw.includes('secuAns1') || raw.includes('secuAns2') || raw.includes('secuAns3')) field = 'security answer';
+      else if (raw.includes('secuans1') || raw.includes('secuans2') || raw.includes('secuans3')) field = 'security answer';
 
-      // Default
       return res.status(409).json({
         error: 'duplicate_identifier',
         field,
@@ -244,9 +245,8 @@ app.post('/api/signup', async (req, res) => {
   }
 });
 
-
 /* ------------------------------------------------------------------ */
-/*                           404                                       */
+/*                               404                                   */
 /* ------------------------------------------------------------------ */
 app.use((req, res) => {
   const fallback404 = path.join(__dirname, 'views', '404.html');
