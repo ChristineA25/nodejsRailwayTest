@@ -268,10 +268,9 @@ app.get('/items', async (req, res) => {
     if (shopID) { where.push('`shopID` = ?'); params.push(shopID); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const sql = `
-      SELECT DISTINCT \`item\` AS name
-      FROM \`prices\`
-      ${whereSql}
-      ORDER BY \`item\` ASC
+      SELECT DISTINCT \`name\` AS name
+      FROM \`item\`
+      ORDER BY \`name\` ASC
     `;
     const [rows] = await pool.query(sql, params);
     const items = rows.map(r => (r.name ?? '').toString().trim()).filter(Boolean);
