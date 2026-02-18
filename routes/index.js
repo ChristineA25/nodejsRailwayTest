@@ -4,6 +4,12 @@ import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
 
+import { Router } from 'express';
+
+
+export default function buildRouter(pool) {
+  const router = Router();
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
@@ -207,9 +213,9 @@ app.post('/phone/validate', async (req, res) => {
     return res.json({ valid: false });
   }
 });
-
-// ---- Your existing data endpoints (unchanged; adjust names if needed) -------
-app.get('/shops', async (_req, res) => {
+  
+// SHOPS (and the rest of your endpoints)
+router.get('/shops', async (_req, res) => {
   try {
     const [rows] = await pool.query(
       'SELECT DISTINCT `shopName` AS name FROM `chainShop` ORDER BY `shopName` ASC'
