@@ -1,19 +1,16 @@
 
 {
-  "name": "nodejs-railway-test",
-  "version": "1.0.1",
+  "name": "item-api",
+  "version": "1.0.0",
   "type": "module",
-  "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "check": "node --check index.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
-    "mysql2": "^3.9.2",
-    "bcryptjs": "^2.4.3"
-  },
-  "engines": {
-    "node": ">=18"
+    "express": "^4.19.2",
+    "mysql2": "^3.9.0"
   }
 }
