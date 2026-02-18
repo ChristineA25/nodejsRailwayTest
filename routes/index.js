@@ -349,12 +349,12 @@ app.get('/item-colors', async (req, res) => {
     const { brand, channel, shopID } = req.query;
     const where = [];
     const params = [];
-    if (brand)   { where.push('`brand` = ?');   params.push(brand); }
+    if (brand) { where.push('`brand` = ?'); params.push(brand); }
     if (channel) { where.push('`channel` = ?'); params.push(channel); }
-    if (shopID)  { where.push('`shopID` = ?');  params.push(shopID); }
+    if (shopID) { where.push('`shopID` = ?'); params.push(shopID); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(`
-      SELECT \`name\` AS item, \`productColor\` AS colors
+      SELECT \`item\` AS item, \`productColor\` AS colors
       FROM \`item\`
       ${whereSql}
     `, params);
@@ -367,15 +367,12 @@ app.get('/item-colors', async (req, res) => {
       const existing = byItem.get(item) ?? '';
       if (colorsStr.length > existing.length) byItem.set(item, colorsStr);
     }
-    const data = Array.from(byItem.entries()).map(([item, colorsStr]) => ({
-      item,
-      colors: colorsStr
-        .toLowerCase()
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean),
-    })).sort((a, b) => a.item.localeCompare(b.item));
-
+    const data = Array.from(byItem.entries())
+      .map(([item, colorsStr]) => ({
+        item,
+        colors: colorsStr.toLowerCase().split(',').map(s => s.trim()).filter(Boolean),
+      }))
+      .sort((a, b) => a.item.localeCompare(b.item));
     res.json({ items: data });
   } catch (e) {
     console.error('Error in /item-colors:', e);
