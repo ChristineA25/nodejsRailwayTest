@@ -573,6 +573,9 @@ app.post('/signup', async (req, res) => {
   }
 });
 
+import itemsRouter from './routes/items.js';
+app.use('/api/items', itemsRouter);
+
 // ------------------------------ Start server --------------------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
