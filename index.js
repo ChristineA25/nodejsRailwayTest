@@ -5,11 +5,6 @@ import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import { pool, pingDB } from './db.js';
 
-
-// index.js (ESM) — ADD these two lines
-import itemsRouter from './routes/item.js';           // NEW
-app.use('/api/items', itemsRouter);                   // NEW
-
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '512kb' }));
@@ -45,6 +40,10 @@ function normalizeCode(s) {
   if (!digits.startsWith('+')) return '+' + digits.replace(/\D/g, '');
   return '+' + digits.slice(1).replace(/\D/g, '');
 }
+
+// index.js (ESM) — ADD these two lines
+import itemsRouter from './routes/item.js';           // NEW
+app.use('/api/items', itemsRouter);                   // NEW
 
 // -------------------------- Root & health -----------------------------------
 app.get('/', (_req, res) => res.send('API is running'));
