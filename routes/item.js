@@ -1,4 +1,14 @@
 
+import { Router } from 'express';
+import crypto from 'crypto';
+import { pool } from '../db.js';
+
+const router = Router();
+
+// ... your GET /:id, POST /byIds, and POST /findOrCreateBatch handlers ...
+
+export default router;  // <-- important
+
 // routes/items.js
 const express = require('express');
 const router = express.Router();
