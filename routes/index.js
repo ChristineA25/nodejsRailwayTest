@@ -6,17 +6,14 @@ import mysql from 'mysql2/promise';
 
 import { Router } from 'express';
 
+const router = Router();
 
-export default function buildRouter(pool) {
-  const router = Router();
-
-const app = express();
-app.use(cors());
-app.use(express.json({ limit: '256kb' }));
+router.use(cors());
+router.use(express.json({ limit: '256kb' }));
 
 // Optional: simple API key gate (set API_KEY in Railway vars)
 const API_KEY = process.env.API_KEY;
-app.use((req, res, next) => {
+router.use((req, res, next) => {
   if (!API_KEY) return next();                 // allow all if not configured
   const key = req.get('x-api-key');
   if (key !== API_KEY) return res.status(401).json({ error: 'Unauthorized' });
@@ -57,8 +54,8 @@ function normalizeCode(s) {
 }
 
 // ---- Routes: root & health --------------------------------------------------
-app.get('/', (_req, res) => res.send('API is running'));
-app.get('/health', async (_req, res) => {
+router.get('/', (_req, res) => res.send('API is running'));
+router.get('/health', async (_req, res) => {
   try {
     const [rows] = await pool.query('SELECT 1 AS ok');
     return res.json({ ok: rows[0]?.ok === 1 });
@@ -69,7 +66,7 @@ app.get('/health', async (_req, res) => {
 
 
 // --- ITEMS: search the `item` table (fetch-only) ----------------------------
-app.get('/api/items/search', async (req, res) => {
+router.get('/api/items/search', async (req, res) => {
   try {
     const q = String(req.query.q ?? '').trim();
     const field = String(req.query.field ?? 'all').toLowerCase();
@@ -125,7 +122,7 @@ app.get('/api/items/search', async (req, res) => {
 
 // ---- PHONE: regions from MySQL ---------------------------------------------
 // Returns: { regions: [{ iso2, name, code, displayCode, min, max }] }
-app.get('/phone/regions', async (_req, res) => {
+router.get('/phone/regions', async (_req, res) => {
   try {
     const [rows] = await pool.query(`
       SELECT
@@ -161,7 +158,7 @@ app.get('/phone/regions', async (_req, res) => {
 });
 
 // --- ALLERGENS: distinct common names ---
-app.get('/api/allergens', async (_req, res) => {
+router.get('/api/allergens', async (_req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT DISTINCT allergenCommonName AS name
@@ -181,7 +178,7 @@ app.get('/api/allergens', async (_req, res) => {
 // ---- PHONE: validate local number against a region --------------------------
 // Expects: { iso2: 'GB', local: '7123456789' }
 // Returns: { valid: boolean, e164?: '+447123456789' }
-app.post('/phone/validate', async (req, res) => {
+router.post('/phone/validate', async (req, res) => {
   try {
     const iso2Req = String(req.body?.iso2 || '').trim().toUpperCase();
     const localRaw = String(req.body?.local || '');
@@ -230,7 +227,7 @@ router.get('/shops', async (_req, res) => {
 
 
 // --- Location lookups: counties, districts, postcodes ---
-app.get('/api/counties', async (req, res) => {
+router.get('/api/counties', async (req, res) => {
   try {
     const [rows] = await pool.execute(
       `SELECT DISTINCT county FROM gbrPostcodeNameSake WHERE county IS NOT NULL AND county <> '' ORDER BY county ASC`
@@ -241,7 +238,7 @@ app.get('/api/counties', async (req, res) => {
   }
 });
 
-app.get('/api/districts', async (req, res) => {
+router.get('/api/districts', async (req, res) => {
   try {
     const { county } = req.query;
     if (!county) return res.status(400).json({ error: 'county_required' });
@@ -259,7 +256,7 @@ app.get('/api/districts', async (req, res) => {
   }
 });
 
-app.get('/api/postcodes', async (req, res) => {
+router.get('/api/postcodes', async (req, res) => {
   try {
     const { county, district } = req.query;
     if (!county)   return res.status(400).json({ error: 'county_required' });
@@ -278,7 +275,7 @@ app.get('/api/postcodes', async (req, res) => {
   }
 });
 
-app.get('/brands', async (_req, res) => {
+router.get('/brands', async (_req, res) => {
   try {
     const [rows] = await pool.query(
       'SELECT DISTINCT `brand` AS name FROM `prices` WHERE `brand` IS NOT NULL AND `brand` <> "" ORDER BY `brand` ASC'
@@ -291,7 +288,7 @@ app.get('/brands', async (_req, res) => {
   }
 });
 
-app.get('/items', async (req, res) => {
+router.get('/items', async (req, res) => {
   try {
     const { brand, channel, shopID } = req.query;
     const where = [];
@@ -315,7 +312,7 @@ app.get('/items', async (req, res) => {
   }
 });
 
-app.get('/items-textless', async (_req, res) => {
+router.get('/items-textless', async (_req, res) => {
   try {
     const [rows] = await pool.query(
       'SELECT DISTINCT `item` AS name FROM `itemColor4` WHERE `item` IS NOT NULL AND `item` <> "" ORDER BY `item` ASC'
@@ -328,7 +325,7 @@ app.get('/items-textless', async (_req, res) => {
   }
 });
 
-app.get('/item-colors-textless', async (_req, res) => {
+router.get('/item-colors-textless', async (_req, res) => {
   try {
     const [rows] = await pool.query(`
       SELECT \`item\` AS item, \`color\` AS colors
@@ -351,7 +348,7 @@ app.get('/item-colors-textless', async (_req, res) => {
   }
 });
 
-app.get('/item-colors', async (req, res) => {
+router.get('/item-colors', async (req, res) => {
   try {
     const { brand, channel, shopID } = req.query;
     const where = [];
@@ -390,7 +387,7 @@ app.get('/item-colors', async (req, res) => {
   }
 });
 
-app.post('/add', async (req, res) => {
+router.post('/add', async (req, res) => {
   const { testing } = req.body || {};
   if (!testing) return res.status(400).json({ error: 'Field "testing" is required.' });
   try {
@@ -403,7 +400,7 @@ app.post('/add', async (req, res) => {
 });
 
 // POST /signup
-app.post('/signup', async (req, res) => {
+router.post('/signup', async (req, res) => {
   try {
     const {
       username,
@@ -469,4 +466,6 @@ app.post('/signup', async (req, res) => {
 
 // ---- Start server -----------------------------------------------------------
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Server running on port ${port}`));
+router.listen(port, () => console.log(`Server running on port ${port}`));
+
+export default router;
