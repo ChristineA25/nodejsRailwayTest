@@ -5,7 +5,7 @@ import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import { pool, pingDB } from './db.js';
 
-import itemsRouter from './routes/items.js'; // <-- default import
+import itemsRouter from './routes/item.js'; // <-- default import
 
 const app = express();
 app.use(cors());
