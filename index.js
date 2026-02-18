@@ -108,11 +108,13 @@ app.get('/api/items/search', async (req, res) => {
   }
 });
 
-// POST /api/items/batchByIds  -> { ids: ["bwlp...","..."] } => full item rows
+
+// Add to index.js (ESM) on the 53a4 service
 app.post('/api/items/batchByIds', async (req, res) => {
   try {
     const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : [];
     if (ids.length === 0) return res.json({ items: [] });
+
     const placeholders = ids.map(() => '?').join(', ');
     const sql = `
       SELECT id, name, brand, quantity, feature, productColor, picWebsite
@@ -120,12 +122,24 @@ app.post('/api/items/batchByIds', async (req, res) => {
       WHERE id IN (${placeholders})
     `;
     const [rows] = await pool.execute(sql, ids);
-    res.json({ items: rows });
+
+    // Ensure strings
+    const items = rows.map(r => ({
+      id: String(r.id ?? ''),
+      name: String(r.name ?? ''),
+      brand: String(r.brand ?? ''),
+      quantity: String(r.quantity ?? ''),
+      feature: String(r.feature ?? ''),
+      productColor: String(r.productColor ?? ''),
+      picWebsite: String(r.picWebsite ?? ''),
+    }));
+    res.json({ items });
   } catch (err) {
     console.error('POST /api/items/batchByIds error:', err);
     res.status(500).json({ error: 'server_error' });
   }
 });
+
 
 // ------------------------- Misc reference data -------------------------------
 // Distinct allergens
