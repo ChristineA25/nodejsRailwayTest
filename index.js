@@ -248,7 +248,7 @@ app.get('/shops', async (_req, res) => {
 app.get('/brands', async (_req, res) => {
   try {
     const [rows] = await pool.query(
-      'SELECT DISTINCT `brand` AS name FROM `prices` WHERE `brand` IS NOT NULL AND `brand` <> "" ORDER BY `brand` ASC'
+      'SELECT DISTINCT `brand` AS name FROM `item` WHERE `brand` IS NOT NULL AND `brand` <> "" ORDER BY `brand` ASC'
     );
     const brands = rows.map(r => (r.name ?? '').toString().trim()).filter(Boolean);
     res.json({ brands });
