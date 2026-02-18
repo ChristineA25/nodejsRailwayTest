@@ -306,7 +306,7 @@ app.get('/brands', async (_req, res) => {
 //   id=string (item.id exact)
 //   name=string (exact)    q=string (LIKE on i.name)
 //   brand=CSV              color=CSV (matches ANY in i.productColor CSV)
-//   shop=string (substring match in i.picWebsite)  -- legacy helper
+//   shop=string (substring match in i.picWebsite)
 //   shopID=string (matches prices.shopID)
 //   channel=string (matches prices.channel)
 //   from=YYYY-MM-DD, to=YYYY-MM-DD (filters by COALESCE(p.date, i.date))
@@ -460,7 +460,7 @@ app.get('/item-colors', async (req, res) => {
       params
     );
 
-    // Prefer the "longest" color string when duplicates exist (as you did before)
+    // Prefer the "longest" color string when duplicates exist (as before)
     const byItem = new Map();
     for (const r of rows) {
       const item = (r.item ?? '').toString().trim();
@@ -542,4 +542,23 @@ app.post('/signup', async (req, res) => {
       hashed,
       finalEmail,
       phone_country_code ?? null,
-      phone_number ??
+      phone_number ?? null,
+      q1 ?? null, a1 ?? null,
+      q2 ?? null, a2 ?? null,
+      q3 ?? null, a3 ?? null,
+    ];
+
+    const [result] = await pool.query(sql, params);
+    return res.status(201).json({ userID: result.insertId });
+  } catch (err) {
+    if (err && err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Identifier already exists' });
+    }
+    console.error('Signup error:', err); // keep for diagnostics
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ------------------------------ Start server --------------------------------
+const port = process.env.PORT || 3000;
+app.listen(port, () => console.log(`Server running on port ${port}`));
