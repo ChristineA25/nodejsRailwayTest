@@ -5,6 +5,8 @@ import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import { pool, pingDB } from './db.js'; // see db.js below
 
+import buildRouter from './routes/index.js';
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
@@ -414,6 +416,9 @@ app.post('/signup', async (req, res) => {
     return res.status(500).json({ error: 'Server error' });
   }
 });
+
+// Mount your routes at root (so /shops is exactly /shops)
+app.use('/', buildRouter(pool));
 
 // ----------------------------------------------------------------------------
 // Start server (single instance only)
