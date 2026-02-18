@@ -5,6 +5,11 @@ import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import { pool, pingDB } from './db.js';
 
+
+// index.js (ESM) — ADD these two lines
+import itemsRouter from './routes/item.js';           // NEW
+app.use('/api/items', itemsRouter);                   // NEW
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '512kb' }));
