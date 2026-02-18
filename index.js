@@ -1,6 +1,7 @@
 
 // index.js (ESM) — single server, new schema ready
 import express from 'express';
+import router from './routes/index.js';
 import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import { pool, pingDB } from './db.js'; // see db.js below
