@@ -1,34 +1,26 @@
 
-// index.js (ESM)
+// index.js (ESM) — single server, new schema ready
 import express from 'express';
 import cors from 'cors';
 import bcrypt from 'bcryptjs';
-import { pool, pingDB } from './db.js';
+import { pool, pingDB } from './db.js'; // see db.js below
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
 
-// Optional: simple API key gate (set API_KEY in Railway Variables)
+// Optional: simple API key gate (Railway variable API_KEY)
 const API_KEY = process.env.API_KEY;
 app.use((req, res, next) => {
-  if (!API_KEY) return next(); // allow all if not configured
+  if (!API_KEY) return next();
   const key = req.get('x-api-key');
   if (key !== API_KEY) return res.status(401).json({ error: 'Unauthorized' });
   next();
 });
 
-// Root & health
-app.get('/', (_req, res) => res.send('API is running'));
-app.get('/health', async (_req, res) => {
-  try {
-    const ok = await pingDB();
-    return res.json({ ok });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
+// ----------------------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------------------
 /** Normalize to canonical '+<digits>' (e.g., '+ 1-264' -> '+1264') */
 function normalizeCode(s) {
   const raw = String(s ?? '');
@@ -39,21 +31,34 @@ function normalizeCode(s) {
   return '+' + digits.slice(1).replace(/\D/g, '');
 }
 
+// ----------------------------------------------------------------------------
+// Root & Health
+// ----------------------------------------------------------------------------
+app.get('/', (_req, res) => res.send('API is running'));
+app.get('/health', async (_req, res) => {
+  try {
+    const ok = await pingDB();
+    return res.json({ ok });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
-// --- ITEMS: search the `item` table (fetch-only) ----------------------------
-// GET /api/items/search?q=...&field=all|name|brand|quantity|feature|productcolor&limit=50
+// ----------------------------------------------------------------------------
+// ITEMS: search the `item` table (fetch-only)
+// GET /api/items/search?q=&field=all|name|brand|quantity|feature|productcolor&limit=50
+// ----------------------------------------------------------------------------
 app.get('/api/items/search', async (req, res) => {
   try {
     const q = String(req.query.q ?? '').trim();
     const field = String(req.query.field ?? 'all').toLowerCase();
     const limit = Math.min(parseInt(String(req.query.limit ?? '50'), 10) || 50, 100);
 
-    const allow = new Set(['all','name','brand','quantity','feature','productcolor']);
+    const allow = new Set(['all', 'name', 'brand', 'quantity', 'feature', 'productcolor']);
     if (!allow.has(field)) return res.status(400).json({ error: 'invalid_field' });
 
     const where = [];
     const params = [];
-
     if (q) {
       const like = `%${q}%`;
       if (field === 'all') {
@@ -95,8 +100,111 @@ app.get('/api/items/search', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// Batch fetch by IDs (from `item`) — POST /api/items/batchByIds
+// body: { ids: ["<id1>", "<id2>", ...] }
+// ----------------------------------------------------------------------------
+app.post('/api/items/batchByIds', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : [];
+    if (ids.length === 0) return res.json({ items: [] });
 
-// --- ALLERGENS: distinct common names ---
+    const placeholders = ids.map(() => '?').join(', ');
+    const sql = `
+      SELECT id, name, brand, quantity, feature, productColor, picWebsite
+      FROM item
+      WHERE id IN (${placeholders})
+    `;
+    const [rows] = await pool.execute(sql, ids);
+    res.json({ items: rows });
+  } catch (err) {
+    console.error('POST /api/items/batchByIds error:', err);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// BRANDS / ITEMS (for dropdowns) — now reading from `item`
+// ----------------------------------------------------------------------------
+app.get('/brands', async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT DISTINCT `brand` AS name FROM `item` WHERE `brand` IS NOT NULL AND `brand` <> "" ORDER BY `brand` ASC'
+    );
+    const brands = rows.map(r => (r.name ?? '').toString().trim()).filter(Boolean);
+    res.json({ brands });
+  } catch (e) {
+    console.error('Error in /brands:', e);
+    res.status(500).json({ error: 'Failed to load brands' });
+  }
+});
+
+app.get('/items', async (req, res) => {
+  try {
+    const { brand } = req.query;
+    const where = [];
+    const params = [];
+    if (brand) { where.push('`brand` = ?'); params.push(brand); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const sql = `
+      SELECT DISTINCT \`name\` AS name
+      FROM \`item\`
+      ${whereSql}
+      ORDER BY \`name\` ASC
+    `;
+    const [rows] = await pool.query(sql, params);
+    const items = rows.map(r => (r.name ?? '').toString().trim()).filter(Boolean);
+    res.json({ items });
+  } catch (e) {
+    console.error('Error in /items:', e);
+    res.status(500).json({ error: 'Failed to load items' });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// Item colors (from `item.productColor`), optionally filter by brand
+// ----------------------------------------------------------------------------
+app.get('/item-colors', async (req, res) => {
+  try {
+    const { brand } = req.query;
+    const where = [];
+    const params = [];
+    if (brand) { where.push('`brand` = ?'); params.push(brand); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const [rows] = await pool.query(`
+      SELECT \`name\` AS item, \`productColor\` AS colors
+      FROM \`item\`
+      ${whereSql}
+    `, params);
+
+    // Deduplicate by item, keep the longest colors string per item
+    const byItem = new Map();
+    for (const r of rows) {
+      const item = (r.item ?? '').toString().trim();
+      const colorsStr = (r.colors ?? '').toString().trim();
+      if (!item || !colorsStr) continue;
+      const existing = byItem.get(item) ?? '';
+      if (colorsStr.length > existing.length) byItem.set(item, colorsStr);
+    }
+
+    const data = Array.from(byItem.entries())
+      .map(([item, colorsStr]) => ({
+        item,
+        colors: colorsStr.toLowerCase().split(',').map(s => s.trim()).filter(Boolean),
+      }))
+      .sort((a, b) => a.item.localeCompare(b.item));
+
+    res.json({ items: data });
+  } catch (e) {
+    console.error('Error in /item-colors:', e);
+    res.status(500).json({ error: 'Failed to load item colours' });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// Allergens (unchanged) — still from commonAllergen
+// ----------------------------------------------------------------------------
 app.get('/api/allergens', async (_req, res) => {
   try {
     const [rows] = await pool.query(
@@ -114,7 +222,9 @@ app.get('/api/allergens', async (_req, res) => {
   }
 });
 
-// --- PHONE: regions from MySQL (preserving your query & mapping) ---
+// ----------------------------------------------------------------------------
+// Phone: regions + validate (unchanged tables: phoneInfo)
+// ----------------------------------------------------------------------------
 app.get('/phone/regions', async (_req, res) => {
   try {
     const [rows] = await pool.query(`
@@ -131,12 +241,12 @@ app.get('/phone/regions', async (_req, res) => {
     const regions = rows.map(r => {
       const iso2 = String(r.iso2 ?? '').trim().toUpperCase();
       const displayCode = String(r.phoneCode ?? '').trim();
-      const code = normalizeCode(displayCode); // canonical '+<digits>'
+      const code = normalizeCode(displayCode);
       return {
         iso2,
         name: String(r.name ?? '').trim(),
-        code,          // e.g. '+44'
-        displayCode,   // e.g. '+ 1-264'
+        code,        // '+44'
+        displayCode, // '+ 1-264'
         min: Number(r.minLen ?? 0),
         max: Number(r.maxLen ?? 0),
       };
@@ -148,57 +258,6 @@ app.get('/phone/regions', async (_req, res) => {
   }
 });
 
-
-// --- Location lookups: counties, districts, postcodes ---
-app.get('/api/counties', async (req, res) => {
-  try {
-    const [rows] = await pool.execute(
-      `SELECT DISTINCT county FROM gbrPostcodeNameSake WHERE county IS NOT NULL AND county <> '' ORDER BY county ASC`
-    );
-    res.json({ items: rows.map(r => r.county) });
-  } catch (e) {
-    res.status(500).json({ error: 'counties_fetch_failed' });
-  }
-});
-
-app.get('/api/districts', async (req, res) => {
-  try {
-    const { county } = req.query;
-    if (!county) return res.status(400).json({ error: 'county_required' });
-
-    const [rows] = await pool.execute(
-      `SELECT DISTINCT district 
-         FROM gbrPostcodeNameSake 
-        WHERE county = ? AND district IS NOT NULL AND district <> '' 
-        ORDER BY district ASC`,
-      [county]
-    );
-    res.json({ items: rows.map(r => r.district) });
-  } catch (e) {
-    res.status(500).json({ error: 'districts_fetch_failed' });
-  }
-});
-
-app.get('/api/postcodes', async (req, res) => {
-  try {
-    const { county, district } = req.query;
-    if (!county)   return res.status(400).json({ error: 'county_required' });
-    if (!district) return res.status(400).json({ error: 'district_required' });
-
-    const [rows] = await pool.execute(
-      `SELECT DISTINCT postcode 
-         FROM gbrPostcodeNameSake 
-        WHERE county = ? AND district = ? AND postcode IS NOT NULL AND postcode <> '' 
-        ORDER BY postcode ASC`,
-      [county, district]
-    );
-    res.json({ items: rows.map(r => r.postcode) });
-  } catch (e) {
-    res.status(500).json({ error: 'postcodes_fetch_failed' });
-  }
-});
-
-// --- PHONE: validate local number against a region ---
 app.post('/phone/validate', async (req, res) => {
   try {
     const iso2Req = String(req.body?.iso2 ?? '').trim().toUpperCase();
@@ -222,7 +281,7 @@ app.post('/phone/validate', async (req, res) => {
     if (localDigits.length < minLen || localDigits.length > maxLen) {
       return res.json({ valid: false });
     }
-    const canonCode = normalizeCode(row.phoneCode); // '+44', '+1264', etc.
+    const canonCode = normalizeCode(row.phoneCode);
     const e164 = `${canonCode}${localDigits}`;
     return res.json({ valid: true, e164 });
   } catch (e) {
@@ -231,132 +290,61 @@ app.post('/phone/validate', async (req, res) => {
   }
 });
 
-// --- SHOPS / BRANDS / ITEMS / COLORS (kept from your file) ---
-app.get('/shops', async (_req, res) => {
+// ----------------------------------------------------------------------------
+// UK Location lookups (unchanged tables: gbrPostcodeNameSake)
+// ----------------------------------------------------------------------------
+app.get('/api/counties', async (_req, res) => {
   try {
-    const [rows] = await pool.query(
-      'SELECT DISTINCT `shopName` AS name FROM `chainShop` ORDER BY `shopName` ASC'
+    const [rows] = await pool.execute(
+      `SELECT DISTINCT county
+         FROM gbrPostcodeNameSake
+        WHERE county IS NOT NULL AND county <> ''
+        ORDER BY county ASC`
     );
-    const shops = rows.map(r => (r.name ?? '').toString().trim()).filter(Boolean);
-    res.json({ shops });
+    res.json({ items: rows.map(r => r.county) });
   } catch (e) {
-    console.error('Error in /shops:', e);
-    res.status(500).json({ error: 'Failed to load shops' });
+    res.status(500).json({ error: 'counties_fetch_failed' });
   }
 });
 
-app.get('/brands', async (_req, res) => {
+app.get('/api/districts', async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      'SELECT DISTINCT `brand` AS name FROM `prices` WHERE `brand` IS NOT NULL AND `brand` <> "" ORDER BY `brand` ASC'
+    const { county } = req.query;
+    if (!county) return res.status(400).json({ error: 'county_required' });
+    const [rows] = await pool.execute(
+      `SELECT DISTINCT district
+         FROM gbrPostcodeNameSake
+        WHERE county = ? AND district IS NOT NULL AND district <> ''
+        ORDER BY district ASC`,
+      [county]
     );
-    const brands = rows.map(r => (r.name ?? '').toString().trim()).filter(Boolean);
-    res.json({ brands });
+    res.json({ items: rows.map(r => r.district) });
   } catch (e) {
-    console.error('Error in /brands:', e);
-    res.status(500).json({ error: 'Failed to load brands' });
+    res.status(500).json({ error: 'districts_fetch_failed' });
   }
 });
 
-app.get('/items', async (req, res) => {
+app.get('/api/postcodes', async (req, res) => {
   try {
-    const { brand, channel, shopID } = req.query;
-    const where = [];
-    const params = [];
-    if (brand) { where.push('`brand` = ?'); params.push(brand); }
-    if (channel) { where.push('`channel` = ?'); params.push(channel); }
-    if (shopID) { where.push('`shopID` = ?'); params.push(shopID); }
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const sql = `
-      SELECT DISTINCT \`item\` AS name
-      FROM \`prices\`
-      ${whereSql}
-      ORDER BY \`item\` ASC
-    `;
-    const [rows] = await pool.query(sql, params);
-    const items = rows.map(r => (r.name ?? '').toString().trim()).filter(Boolean);
-    res.json({ items });
-  } catch (e) {
-    console.error('Error in /items:', e);
-    res.status(500).json({ error: 'Failed to load items' });
-  }
-});
-
-app.get('/items-textless', async (_req, res) => {
-  try {
-    const [rows] = await pool.query(
-      'SELECT DISTINCT `item` AS name FROM `itemColor4` WHERE `item` IS NOT NULL AND `item` <> "" ORDER BY `item` ASC'
+    const { county, district } = req.query;
+    if (!county) return res.status(400).json({ error: 'county_required' });
+    if (!district) return res.status(400).json({ error: 'district_required' });
+    const [rows] = await pool.execute(
+      `SELECT DISTINCT postcode
+         FROM gbrPostcodeNameSake
+        WHERE county = ? AND district = ? AND postcode IS NOT NULL AND postcode <> ''
+        ORDER BY postcode ASC`,
+      [county, district]
     );
-    const items = rows.map(r => (r.name ?? '').toString().trim()).filter(Boolean);
-    res.json({ items });
+    res.json({ items: rows.map(r => r.postcode) });
   } catch (e) {
-    console.error('Error in /items-textless:', e);
-    res.status(500).json({ error: 'Failed to load textless items' });
+    res.status(500).json({ error: 'postcodes_fetch_failed' });
   }
 });
 
-app.get('/item-colors-textless', async (_req, res) => {
-  try {
-    const [rows] = await pool.query(`
-      SELECT \`item\` AS item, \`color\` AS colors
-      FROM \`itemColor4\`
-      WHERE \`item\` IS NOT NULL AND \`item\` <> ""
-    `);
-    const data = rows
-      .map(r => ({
-        item: (r.item ?? '').toString().trim(),
-        colors: (r.colors ?? '')
-          .toString()
-          .toLowerCase()
-          .split(',')
-          .map(s => s.trim())
-          .filter(Boolean),
-      }))
-      .filter(x => x.item.length > 0);
-    res.json({ items: data });
-  } catch (e) {
-    console.error('Error in /item-colors-textless:', e);
-    res.status(500).json({ error: 'Failed to load textless item colours' });
-  }
-});
-
-app.get('/item-colors', async (req, res) => {
-  try {
-    const { brand, channel, shopID } = req.query;
-    const where = [];
-    const params = [];
-    if (brand) { where.push('`brand` = ?'); params.push(brand); }
-    if (channel) { where.push('`channel` = ?'); params.push(channel); }
-    if (shopID) { where.push('`shopID` = ?'); params.push(shopID); }
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const [rows] = await pool.query(`
-      SELECT \`item\` AS item, \`productColor\` AS colors
-      FROM \`prices\`
-      ${whereSql}
-    `, params);
-
-    const byItem = new Map();
-    for (const r of rows) {
-      const item = (r.item ?? '').toString().trim();
-      const colorsStr = (r.colors ?? '').toString().trim();
-      if (!item || !colorsStr) continue;
-      const existing = byItem.get(item) ?? '';
-      if (colorsStr.length > existing.length) byItem.set(item, colorsStr);
-    }
-    const data = Array.from(byItem.entries())
-      .map(([item, colorsStr]) => ({
-        item,
-        colors: colorsStr.toLowerCase().split(',').map(s => s.trim()).filter(Boolean),
-      }))
-      .sort((a, b) => a.item.localeCompare(b.item));
-    res.json({ items: data });
-  } catch (e) {
-    console.error('Error in /item-colors:', e);
-    res.status(500).json({ error: 'Failed to load item colours' });
-  }
-});
-
-// --- Simple test insert (unchanged) ---
+// ----------------------------------------------------------------------------
+// Simple test insert (unchanged)
+// ----------------------------------------------------------------------------
 app.post('/add', async (req, res) => {
   const { testing } = req.body ?? {};
   if (!testing) return res.status(400).json({ error: 'Field "testing" is required.' });
@@ -369,14 +357,16 @@ app.post('/add', async (req, res) => {
   }
 });
 
-// --- SIGNUP (fixed) ---
+// ----------------------------------------------------------------------------
+// Signup (kept minimal; adjust to your schema if needed)
+// ----------------------------------------------------------------------------
 app.post('/signup', async (req, res) => {
   try {
     const {
       username,
       email,
       password,            // from Flutter client
-      phone_country_code,  // digits only, e.g. "678"
+      phone_country_code,  // digits only, e.g., "852"
       phone_number,        // digits only
       q1, a1, q2, a2, q3, a3,
     } = req.body;
@@ -385,7 +375,7 @@ app.post('/signup', async (req, res) => {
       return res.status(400).json({ error: 'Weak or missing password' });
     }
 
-    // Allow any one identifier; if none given, derive from phone
+    // Allow any one identifier; derive username from phone if none provided
     let finalUsername = username ?? null;
     const finalEmail = email ?? null;
     if (!finalUsername && !finalEmail && phone_country_code && phone_number) {
@@ -395,13 +385,12 @@ app.post('/signup', async (req, res) => {
       return res.status(400).json({ error: 'Provide username, email, or phone' });
     }
 
-    // Hash password (bcryptjs)
     const hashed = await bcrypt.hash(password, 10);
 
-    // Insert into loginTable (store hashed in 'password' column)
     const sql = `
       INSERT INTO loginTable
-        (username, password, email, phone_country_code, phone_number, secuQuestion1, secuAns1, secuQuestion2, secuAns2, secuQuestion3, secuAns3)
+        (username, password, email, phone_country_code, phone_number,
+         secuQuestion1, secuAns1, secuQuestion2, secuAns2, secuQuestion3, secuAns3)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     const params = [
@@ -421,10 +410,13 @@ app.post('/signup', async (req, res) => {
     if (err && err.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ error: 'Identifier already exists' });
     }
-    console.error('Signup error:', err); // keep for diagnostics
+    console.error('Signup error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 });
 
+// ----------------------------------------------------------------------------
+// Start server (single instance only)
+// ----------------------------------------------------------------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
