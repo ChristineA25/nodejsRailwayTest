@@ -11,7 +11,7 @@ export default router;  // <-- important
 
 // routes/items.js
 const express = require('express');
-const router = express.Router();
+// const router = express.Router();
 // reuse your existing DB pool/conn; example shown:
 const db = require('../db'); // adjust to your project
 
