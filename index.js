@@ -258,28 +258,115 @@ app.get('/brands', async (_req, res) => {
   }
 });
 
+
+// GET /items?brand=FAIRY,BOLD&shop=tesco&color=blue,white&from=2026-02-16&to=2026-02-17&name=wash%20up%20liquid&limit=200
 app.get('/items', async (req, res) => {
+  // Helper: CSV → cleaned array
+  const splitCsv = (v) =>
+    (typeof v === 'string' ? v.split(',') : Array.isArray(v) ? v : [])
+      .map(s => (s ?? '').toString().trim())
+      .filter(Boolean);
+
   try {
-    const { brand, channel, shopID } = req.query;
+    const {
+      id,
+      name,               // exact or combine with q (LIKE)
+      q,                  // free text in name
+      brand,              // CSV or repeat query param
+      shop,               // value like "tesco", "savers" etc. matched in picWebsite
+      color,              // CSV of colors; matches ANY color found in productColor
+      from,               // ISO date lower bound inclusive
+      to,                 // ISO date upper bound inclusive
+      limit = '200',
+      offset = '0'
+    } = req.query;
+
     const where = [];
     const params = [];
-    if (brand) { where.push('`brand` = ?'); params.push(brand); }
-    if (channel) { where.push('`channel` = ?'); params.push(channel); }
-    if (shopID) { where.push('`shopID` = ?'); params.push(shopID); }
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    // id
+    if (id) {
+      where.push('`id` = ?');
+      params.push(id);
+    }
+
+    // name exact
+    if (name) {
+      where.push('`name` = ?');
+      params.push(name);
+    }
+
+    // free text search in name
+    if (q) {
+      where.push('`name` LIKE ?');
+      params.push(`%${q}%`);
+    }
+
+    // brand: supports multiple
+    const brands = splitCsv(brand);
+    if (brands.length) {
+      where.push('(' + brands.map(() => '`brand` = ?').join(' OR ') + ')');
+      params.push(...brands);
+    }
+
+    // shop: match inside picWebsite hostname/url
+    if (shop) {
+      // Simple contains; if you want host-only match, parse on write or store a derived column
+      where.push('`picWebsite` LIKE ?');
+      params.push(`%${shop}%`);
+    }
+
+    // color(s): productColor is CSV; match ANY requested color
+    const colors = splitCsv(color).map(c => c.toLowerCase());
+    if (colors.length) {
+      // Normalize spaces and commas in SQL and use FIND_IN_SET for robust matching.
+      // We lower-case on both sides to make it case-insensitive-ish without collation change.
+      const colorClause = colors
+        .map(() => 'FIND_IN_SET(LOWER(?), REPLACE(REPLACE(`productColor`, " ", ""), ",,", ","))')
+        .join(' OR ');
+      where.push('(' + colorClause + ')');
+      params.push(...colors.map(c => c.replace(/\s+/g, '')));
+    }
+
+    // date range
+    if (from) {
+      where.push('`date` >= ?');
+      params.push(from);
+    }
+    if (to) {
+      where.push('`date` <= ?');
+      params.push(to);
+    }
+
+    // assemble WHERE
+    const whereSql = where.length ? ` WHERE ${where.join(' AND ')}` : '';
+
+    // Sanity limits
+    const lim = Math.max(1, Math.min(parseInt(limit, 10) || 200, 1000));
+    const off = Math.max(0, parseInt(offset, 10) || 0);
+
     const sql = `
       SELECT DISTINCT \`name\` AS name
       FROM \`item\`
+      ${whereSql}
       ORDER BY \`name\` ASC
+      LIMIT ? OFFSET ?
     `;
-    const [rows] = await pool.query(sql, params);
-    const items = rows.map(r => (r.name ?? '').toString().trim()).filter(Boolean);
-    res.json({ items });
+
+    const finalParams = [...params, lim, off];
+
+    const [rows] = await pool.query(sql, finalParams);
+    const items = rows
+      .map(r => (r.name ?? '').toString().trim())
+      .filter(Boolean);
+
+    res.json({ count: items.length, items });
   } catch (e) {
     console.error('Error in /items:', e);
     res.status(500).json({ error: 'Failed to load items' });
   }
 });
+
 
 app.get('/items-textless', async (_req, res) => {
   try {
