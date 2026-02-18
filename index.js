@@ -9,6 +9,9 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
 
+const routes = require('./routes');
+app.use('/', routes);
+
 // Optional: simple API key gate (Railway variable API_KEY)
 const API_KEY = process.env.API_KEY;
 app.use((req, res, next) => {
