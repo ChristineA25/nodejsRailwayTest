@@ -5,6 +5,8 @@ import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import { pool, pingDB } from './db.js';
 
+import itemsRouter from './routes/items.js'; // <-- default import
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '512kb' }));
@@ -572,6 +574,8 @@ app.post('/signup', async (req, res) => {
     return res.status(500).json({ error: 'Server error' });
   }
 });
+
+app.use('/api/items', itemsRouter);
 
 // ------------------------------ Start server --------------------------------
 const port = process.env.PORT || 3000;
