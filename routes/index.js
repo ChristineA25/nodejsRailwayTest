@@ -354,8 +354,8 @@ app.get('/item-colors', async (req, res) => {
     if (shopID)  { where.push('`shopID` = ?');  params.push(shopID); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(`
-      SELECT \`item\` AS item, \`productColor\` AS colors
-      FROM \`prices\`
+      SELECT \`name\` AS item, \`productColor\` AS colors
+      FROM \`item\`
       ${whereSql}
     `, params);
 
