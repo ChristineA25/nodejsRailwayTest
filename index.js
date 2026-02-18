@@ -573,7 +573,7 @@ app.post('/signup', async (req, res) => {
   }
 });
 
-import itemsRouter from './routes/items.js';
+import itemsRouter from './routes/item.js';
 app.use('/api/items', itemsRouter);
 
 // ------------------------------ Start server --------------------------------
