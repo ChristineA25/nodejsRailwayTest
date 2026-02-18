@@ -330,7 +330,7 @@ app.get('/item-colors', async (req, res) => {
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(`
       SELECT \`item\` AS item, \`productColor\` AS colors
-      FROM \`prices\`
+      FROM \`item\`
       ${whereSql}
     `, params);
 
