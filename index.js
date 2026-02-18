@@ -5,13 +5,11 @@ import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import { pool, pingDB } from './db.js';
 
-import itemsRouter from './routes/item.js'; // <-- default import
-
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '512kb' }));
 
-// Optional API key gate (set API_KEY on Railway)
+// Optional API key gate (set API_KEY in Railway Variables)
 const API_KEY = process.env.API_KEY || null;
 app.use((req, res, next) => {
   if (!API_KEY) return next();
@@ -20,12 +18,12 @@ app.use((req, res, next) => {
   next();
 });
 
-// Log DB vars (helps when debugging on Railway)
+// Log DB vars (helps when debugging on Railway; no secrets)
 console.log('DB VARS SNAPSHOT', {
-  MYSQLHOST: process.env.MYSQLHOST,
-  MYSQLUSER: process.env.MYSQLUSER,
-  MYSQLDATABASE: process.env.MYSQLDATABASE,
-  MYSQLPORT: process.env.MYSQLPORT,
+  MYSQLHOST: process.env.MYSQLHOST || process.env.MYSQL_HOST,
+  MYSQLUSER: process.env.MYSQLUSER || process.env.MYSQL_USER,
+  MYSQLDATABASE: process.env.MYSQLDATABASE || process.env.MYSQL_DATABASE,
+  MYSQLPORT: process.env.MYSQLPORT || process.env.MYSQL_PORT,
 });
 
 // ----------------------------- Helpers --------------------------------------
@@ -86,10 +84,10 @@ app.get('/api/items/search', async (req, res) => {
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const sql = `
       SELECT id, name, brand, quantity, feature, productColor, picWebsite
-      FROM item
-      ${whereSql}
-      ORDER BY name ASC, brand ASC
-      LIMIT ?
+        FROM item
+       ${whereSql}
+    ORDER BY name ASC, brand ASC
+       LIMIT ?
     `;
     params.push(limit);
 
@@ -110,8 +108,8 @@ app.get('/api/items/search', async (req, res) => {
   }
 });
 
-
-// Add to index.js (ESM) on the 53a4 service
+// Batch fetch items by IDs
+// POST /api/items/batchByIds  { ids: ["1","2",...]}
 app.post('/api/items/batchByIds', async (req, res) => {
   try {
     const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter(Boolean) : [];
@@ -120,13 +118,12 @@ app.post('/api/items/batchByIds', async (req, res) => {
     const placeholders = ids.map(() => '?').join(', ');
     const sql = `
       SELECT id, name, brand, quantity, feature, productColor, picWebsite
-      FROM item
-      WHERE id IN (${placeholders})
+        FROM item
+       WHERE id IN (${placeholders})
     `;
     const [rows] = await pool.execute(sql, ids);
 
-    // Ensure strings
-    const items = rows.map(r => ({
+    const items = rows.map((r) => ({
       id: String(r.id ?? ''),
       name: String(r.name ?? ''),
       brand: String(r.brand ?? ''),
@@ -141,7 +138,6 @@ app.post('/api/items/batchByIds', async (req, res) => {
     res.status(500).json({ error: 'server_error' });
   }
 });
-
 
 // ------------------------- Misc reference data -------------------------------
 // Distinct allergens
@@ -317,7 +313,6 @@ app.get('/brands', async (_req, res) => {
 });
 
 // --------------------------- Items (for Flutter) ----------------------------
-// NEW STRUCTURE AWARE: joins `item` with `prices` when needed.
 // Supported query params:
 //   id=string (item.id exact)
 //   name=string (exact)    q=string (LIKE on i.name)
@@ -328,7 +323,7 @@ app.get('/brands', async (_req, res) => {
 //   from=YYYY-MM-DD, to=YYYY-MM-DD (filters by COALESCE(p.date, i.date))
 //   limit (default 200, max 1000)  offset (default 0)
 //
-// Response: { count, items: [ "wash up liquid", ... ] }
+// Response: { count, items: [ "<name>", ... ] }
 app.get('/items', async (req, res) => {
   try {
     const {
@@ -349,7 +344,6 @@ app.get('/items', async (req, res) => {
     const brands = splitCsv(brand);
     const colors = splitCsv(color).map((c) => c.toLowerCase());
 
-    // Always left join prices so filters can apply if provided.
     const where = [];
     const params = [];
 
@@ -386,7 +380,6 @@ app.get('/items', async (req, res) => {
     if (to)   { where.push('COALESCE(p.`date`, i.`date`) <= ?'); params.push(to); }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-
     const lim = Math.max(1, Math.min(parseInt(limit, 10) || 200, 1000));
     const off = Math.max(0, parseInt(offset, 10) || 0);
 
@@ -476,7 +469,7 @@ app.get('/item-colors', async (req, res) => {
       params
     );
 
-    // Prefer the "longest" color string when duplicates exist (as before)
+    // Prefer the "longest" color string when duplicates exist
     const byItem = new Map();
     for (const r of rows) {
       const item = (r.item ?? '').toString().trim();
@@ -518,7 +511,7 @@ app.post('/add', async (req, res) => {
 });
 
 // ------------------------------ Signup APIs ---------------------------------
-// POST /signup  -> simple password hash storage (bcryptjs) in loginTable
+// POST /signup -> store bcrypt hash in loginTable.password
 app.post('/signup', async (req, res) => {
   try {
     const {
@@ -570,13 +563,12 @@ app.post('/signup', async (req, res) => {
     if (err && err.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ error: 'Identifier already exists' });
     }
-    console.error('Signup error:', err); // keep for diagnostics
+    console.error('Signup error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 });
 
-app.use('/api/items', itemsRouter);
-
 // ------------------------------ Start server --------------------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
+``
