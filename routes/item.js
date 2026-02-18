@@ -60,7 +60,7 @@ router.post('/byIds', async (req, res) => {
 // POST /api/items/findOrCreateBatch
 // Body: { rows: [ { name, brand, feature?, quantity? }, ... ] }
 // Returns: { results: [ { ok, id, existed, error? }, ... ] }
-import crypto from 'crypto';
+// import crypto from 'crypto';
 import { pool } from '../db.js'; // adjust path if this router is sibling to db.js
 
 function norm(s) {
