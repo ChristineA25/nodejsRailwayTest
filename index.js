@@ -41,10 +41,6 @@ function normalizeCode(s) {
   return '+' + digits.slice(1).replace(/\D/g, '');
 }
 
-// index.js (ESM) — ADD these two lines
-import itemsRouter from './routes/item.js';           // NEW
-app.use('/api/items', itemsRouter);                   // NEW
-
 // -------------------------- Root & health -----------------------------------
 app.get('/', (_req, res) => res.send('API is running'));
 app.get('/health', async (_req, res) => {
