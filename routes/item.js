@@ -94,18 +94,34 @@ router.post('/byIds', async (req, res) => {
 });
 
 
+
 // POST /api/items/resolve
-// Body: { brand, item, quantity?: string|{value,unit}, selectedFeatures?: string[] }
+// Body: {
+//   brand, item,
+//   quantity?: string|{value,unit},
+//   selectedFeatures?: string[],
+//   strictQty?: boolean   // NEW
+// }
 router.post('/resolve', async (req, res) => {
   try {
     const brand = String(req.body?.brand || '').trim();
     const item  = String(req.body?.item  || '').trim();
+    const strictQty = Boolean(req.body?.strictQty);          // NEW
+
     if (!brand || !item) {
       return res.status(400).json({ error: 'brand_and_item_required' });
     }
 
     const qty = req.body?.quantity ?? null;
-    const userQty = (qty && typeof qty === 'object') ? qty : (typeof qty === 'string' ? qty : null);
+    const userQty =
+      (qty && typeof qty === 'object')
+        ? qty
+        : (typeof qty === 'string' ? qty : null);
+
+    if (strictQty && !userQty) {
+      // In strict mode, quantity must be provided
+      return res.status(400).json({ error: 'quantity_required_in_strict_mode' });
+    }
 
     const selectedFeatures = Array.isArray(req.body?.selectedFeatures)
       ? req.body.selectedFeatures.map(s => String(s).toLowerCase().trim()).filter(Boolean)
@@ -133,14 +149,17 @@ router.post('/resolve', async (req, res) => {
     // Quantity filter
     if (userQty) {
       candidates = candidates.filter(c => sameQty(userQty, c.quantity));
+    } else if (strictQty) {
+      // In strict mode, if there's no comparable quantity, reject all
+      candidates = [];
     }
 
-    // Union features across candidates
+    // Union features (to suggest to UI if needed)
     const unionFeatures = uniq(
       candidates.flatMap(c => splitFeaturesCSV(c.feature))
     );
 
-    // Feature narrowing if client pre-selected any
+    // Narrow by user's typed features (if provided)
     if (selectedFeatures.length) {
       candidates = candidates.filter(c => {
         const f = splitFeaturesCSV(c.feature);
@@ -154,9 +173,10 @@ router.post('/resolve', async (req, res) => {
       candidates,
     });
   } catch (err) {
-    console.error('POST /api/items/resolve', err);
+    console.error('POST /items/resolve', err);
     res.status(500).json({ error: 'server_error' });
   }
 });
+
 
 module.exports = router;
