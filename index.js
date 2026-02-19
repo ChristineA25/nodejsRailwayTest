@@ -41,6 +41,52 @@ function normalizeCode(s) {
   return '+' + digits.slice(1).replace(/\D/g, '');
 }
 
+
+// ---------- Items resolver helpers (ESM) ----------
+function splitFeaturesCSV(s) {
+  return String(s ?? '')
+    .split(',')
+    .map(x => x.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function uniq(arr) { return Array.from(new Set(arr)); }
+
+// canonicalize quantity to { value, unit } with base units: ml, g, pcs, pack
+function canonQty(raw) {
+  if (!raw) return null;
+  const t = String(raw).trim().toLowerCase().replace(/\s+/g, '');
+  const m = t.match(/^(\d+(?:\.\d+)?)([a-z]+)$/);
+  if (!m) return null;
+  let v = parseFloat(m[1]);
+  let u = m[2];
+
+  // Normalize common plurals/aliases
+  if (u === 'l' || u === 'lt' || u === 'liter' || u === 'litre') { v *= 1000; u = 'ml'; }
+  else if (u === 'kg') { v *= 1000; u = 'g'; }
+  else if (u === 'pc' || u === 'piece' || u === 'pieces') { u = 'pcs'; }
+  else if (u === 'packs') { u = 'pack'; }
+
+  if (!['ml','g','pcs','pack'].includes(u)) return null;
+  return { value: v, unit: u };
+}
+
+function sameQty(userQ, dbQ) {
+  const u = (typeof userQ === 'string' ? canonQty(userQ) : userQ);
+  const d = canonQty(dbQ);
+  if (!u || !d) return true;                   // if either missing, don't filter out
+  if (u.unit !== d.unit) return false;
+
+  if (u.unit === 'pcs' || u.unit === 'pack') {
+    // integer-ish match with small tolerance (e.g. 1 vs 1.0)
+    return Math.abs(u.value - d.value) < 0.5;
+  }
+  // ml/g: allow 2% tolerance
+  const maxV = Math.max(u.value, d.value);
+  return Math.abs(u.value - d.value) <= Math.max(1, 0.02 * maxV);
+}
+
+
 // -------------------------- Root & health -----------------------------------
 app.get('/', (_req, res) => res.send('API is running'));
 app.get('/health', async (_req, res) => {
@@ -108,6 +154,76 @@ app.get('/api/items/search', async (req, res) => {
   }
 });
 
+
+// ----------------------- Item resolve API (ESM) -----------------------------
+// POST /api/items/resolve
+// body: { brand, item, quantity?: {value, unit}|string, selectedFeatures?: string[] }
+app.post('/api/items/resolve', async (req, res) => {
+  try {
+    const brand = String(req.body?.brand ?? '').trim();
+    const item  = String(req.body?.item  ?? '').trim();
+
+    if (!brand || !item) {
+      return res.status(400).json({ error: 'brand_and_item_required' });
+    }
+
+    // Quantity can be string like "545ml" or object { value, unit }
+    const qty = req.body?.quantity ?? null;
+    const userQty = (qty && typeof qty === 'object') ? qty : (typeof qty === 'string' ? qty : null);
+
+    const selectedFeatures = Array.isArray(req.body?.selectedFeatures)
+      ? req.body.selectedFeatures.map(s => String(s).toLowerCase().trim()).filter(Boolean)
+      : [];
+
+    // Case-insensitive exact match for brand & name
+    const sql = `
+      SELECT id, name, brand, quantity, feature, productColor, picWebsite
+      FROM item
+      WHERE LOWER(name)  = LOWER(?)
+        AND LOWER(brand) = LOWER(?)
+    `;
+    const [rows] = await pool.query(sql, [item, brand]);
+    let candidates = rows.map(r => ({
+      id: String(r.id ?? ''),
+      name: String(r.name ?? ''),
+      brand: String(r.brand ?? ''),
+      quantity: String(r.quantity ?? ''),
+      feature: String(r.feature ?? ''),
+      productColor: String(r.productColor ?? ''),
+      picWebsite: String(r.picWebsite ?? ''),
+    }));
+
+    // Filter by (normalized) quantity when provided
+    if (userQty) {
+      candidates = candidates.filter(c => sameQty(userQty, c.quantity));
+    }
+
+    // Union of features across current candidates
+    const unionFeatures = uniq(
+      candidates.flatMap(c => splitFeaturesCSV(c.feature))
+    );
+
+    // If caller provided selectedFeatures, filter further:
+    if (selectedFeatures.length) {
+      candidates = candidates.filter(c => {
+        const f = splitFeaturesCSV(c.feature);
+        // require that all selected features are present in candidate.features
+        return selectedFeatures.every(sf => f.includes(sf));
+      });
+    }
+
+    const payload = {
+      exactId: (candidates.length === 1 ? candidates[0].id : null),
+      suggestedFeatures: unionFeatures,
+      candidates,
+    };
+
+    return res.json(payload);
+  } catch (e) {
+    console.error('POST /api/items/resolve error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
 
 // Add to index.js (ESM) on the 53a4 service
 app.post('/api/items/batchByIds', async (req, res) => {
