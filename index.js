@@ -50,6 +50,20 @@ function splitFeaturesCSV(s) {
     .filter(Boolean);
 }
 
+
+// Helper: canonicalize any supported quantity shape to { value, unit } in base units
+function toCanon(q) {
+  if (!q) return null;
+  if (typeof q === 'string') return canonQty(q);
+
+  // Object like { value, unit } from Flutter
+  if (typeof q === 'object' && q.value != null && q.unit) {
+    // Use canonQty on a synthetic string to reuse unit/alias logic
+    return canonQty(String(q.value) + String(q.unit));
+  }
+  return null;
+}
+
 function uniq(arr) { return Array.from(new Set(arr)); }
 
 // canonicalize quantity to { value, unit } with base units: ml, g, pcs, pack
@@ -71,17 +85,18 @@ function canonQty(raw) {
   return { value: v, unit: u };
 }
 
+
+// Replace sameQty with this version:
 function sameQty(userQ, dbQ) {
-  const u = (typeof userQ === 'string' ? canonQty(userQ) : userQ);
-  const d = canonQty(dbQ);
-  if (!u || !d) return true;                   // if either missing, don't filter out
+  const u = toCanon(userQ);
+  const d = toCanon(dbQ);
+  if (!u || !d) return true;  // if either missing, do not filter out
   if (u.unit !== d.unit) return false;
 
   if (u.unit === 'pcs' || u.unit === 'pack') {
-    // integer-ish match with small tolerance (e.g. 1 vs 1.0)
-    return Math.abs(u.value - d.value) < 0.5;
+    return Math.abs(u.value - d.value) < 0.5; // integer-ish tolerance
   }
-  // ml/g: allow 2% tolerance
+  // ml/g: allow 2% tolerance, min absolute 1 unit
   const maxV = Math.max(u.value, d.value);
   return Math.abs(u.value - d.value) <= Math.max(1, 0.02 * maxV);
 }
