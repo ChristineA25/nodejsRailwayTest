@@ -61,3 +61,33 @@ router.post('/resolve', async (req, res) => {
     res.status(500).json({ error: 'server_error' });
   }
 });
+
+
+router.get('/items/screenshot', async (req, res) => {
+  try {
+    // You can project a different column if needed (e.g., item_name, title)
+    const sql = `
+      SELECT DISTINCT TRIM(name) AS item
+      FROM ScreenshotItems
+      WHERE name IS NOT NULL
+        AND TRIM(name) <> ''
+      ORDER BY LOWER(TRIM(name)) ASC
+    `;
+
+    const [rows] = await pool.query(sql);
+
+    // rows: [ { item: "..." }, ... ]
+    const items = Array.isArray(rows)
+      ? rows
+          .map(r => (r.item || '').toString().trim())
+          .filter(Boolean)
+      : [];
+
+    res.json({ items });
+  } catch (err) {
+    console.error('GET /items/screenshot failed:', err);
+    res.status(500).json({ error: 'Failed to fetch screenshot items' });
+  }
+});
+
+module.exports = router;
