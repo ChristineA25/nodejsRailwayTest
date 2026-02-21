@@ -807,7 +807,6 @@ app.post('/api/item/resolve-by-item', async (req, res) => {
 
 // index.js (ESM) — add to the 53a4 service
 import crypto from 'crypto';
-import { pool } from './db.js';
 
 app.post('/api/items/create-batch', async (req, res) => {
   try {
