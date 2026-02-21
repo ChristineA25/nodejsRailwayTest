@@ -92,7 +92,7 @@ router.get('/items/screenshot', async (req, res) => {
 
 
 // POST /api/items/resolve-by-item
-router.post('/api/items/resolve-by-item', async (req, res) => {
+router.post('/api/item/resolve-by-item', async (req, res) => {
   try {
     const { item, quantity } = req.body || {};
     if (!item || !item.trim()) {
