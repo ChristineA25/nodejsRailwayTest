@@ -19,6 +19,9 @@ app.use(express.json({ limit: '10kb' }));
 // after other imports/middleware
 const itemsRouter = require('./routes/items');
 
+// after other app.use(...)
+app.use('/api/shops', require('./routes/shops'));
+
 app.use('/api/items', itemsRouter);
 
 /* ------------------------------------------------------------------ */
