@@ -90,4 +90,49 @@ router.get('/items/screenshot', async (req, res) => {
   }
 });
 
+
+// POST /api/items/resolve-by-item
+router.post('/api/items/resolve-by-item', async (req, res) => {
+  try {
+    const { item, quantity } = req.body || {};
+    if (!item || !item.trim()) {
+      return res.status(400).json({ error: 'item_required' });
+    }
+
+    // Normalize
+    const normItem = item.trim().toLowerCase();
+
+    // TODO: Replace with your DB access. Example sketch:
+    // 1) Find products whose item/name matches normItem (tokenized/fuzzy).
+    // 2) Optionally boost candidates that match quantity.value/unit.
+    //
+    // const rows = await db.query(`
+    //   SELECT id, brand, name, quantity, feature, picWebsite
+    //   FROM products
+    //   WHERE LOWER(name) LIKE ? OR LOWER(item_alias) LIKE ?
+    //   ORDER BY relevance DESC
+    // `, [`%${normItem}%`, `%${normItem}%`]);
+
+    // Build 'candidates' from rows
+    const candidates = rows.map(r => ({
+      id: String(r.id),
+      brand: r.brand ?? '',
+      name: r.name ?? '',
+      quantity: r.quantity ?? '',
+      feature: r.feature ?? '',
+      picWebsite: r.picWebsite ?? ''
+    }));
+
+    // If you can detect a high-confidence single hit, set exactId
+    let exactId = '';
+    // if (candidates.length === 1 && someHighConfidenceRule) exactId = candidates[0].id;
+
+    return res.json({ exactId, candidates });
+  } catch (e) {
+    console.error('resolve-by-item failed:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+
 module.exports = router;
