@@ -135,4 +135,86 @@ router.post('/api/item/resolve-by-item', async (req, res) => {
 });
 
 
+// POST /api/items/create
+// Body: { id?, name, brand?, quantity, feature?, productColor?, picWebsite? }
+router.post('/create', async (req, res) => {
+  try {
+    const {
+      id, name, brand, quantity, feature, productColor, picWebsite
+    } = req.body || {};
+
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: 'name_required' });
+    }
+    if (!quantity || !String(quantity).trim()) {
+      return res.status(400).json({ error: 'quantity_required' });
+    }
+
+    const tidy = v => (v == null ? null : String(v).trim() || null);
+    const finalId = tidy(id) || crypto.randomBytes(6).toString('base64url'); // ~8 chars
+
+    const sql = `
+      INSERT INTO item (id, name, brand, quantity, feature, productColor, picWebsite)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `;
+    await pool.execute(sql, [
+      finalId,
+      tidy(name),
+      tidy(brand),
+      tidy(quantity),
+      tidy(feature),
+      tidy(productColor),
+      tidy(picWebsite),
+    ]);
+
+    return res.status(201).json({ id: finalId });
+  } catch (e) {
+    console.error('POST /items/create error:', e);
+    if (e.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'duplicate_id' });
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+
+// POST /api/items/create-batch
+// Body: { items: [ { id?, name, brand?, quantity, feature?, productColor?, picWebsite? }, ... ] }
+router.post('/create-batch', async (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (items.length === 0) return res.status(400).json({ error: 'items_required' });
+
+    const rows = [];
+    const genId = () => crypto.randomBytes(6).toString('base64url');
+    const tidy = v => (v == null ? null : String(v).trim() || null);
+
+    for (const it of items) {
+      const name = tidy(it?.name);
+      const quantity = tidy(it?.quantity);
+      if (!name || !quantity) continue; // skip invalid rows
+
+      rows.push([
+        tidy(it?.id) || genId(),
+        name,
+        tidy(it?.brand),
+        quantity,
+        tidy(it?.feature),
+        tidy(it?.productColor),
+        tidy(it?.picWebsite),
+      ]);
+    }
+    if (rows.length === 0) return res.status(400).json({ error: 'no_valid_rows' });
+
+    const sql = `
+      INSERT INTO item (id, name, brand, quantity, feature, productColor, picWebsite)
+      VALUES ?
+    `;
+    await pool.query(sql, [rows]);
+
+    return res.status(201).json({ ids: rows.map(r => r[0]) });
+  } catch (e) {
+    console.error('POST /items/create-batch error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
 module.exports = router;
