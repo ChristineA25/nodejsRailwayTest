@@ -755,6 +755,55 @@ app.post('/signup', async (req, res) => {
   }
 });
 
+
+// --- Add this to your ESM index.js on the 53a4 service ---
+
+// If you want qty normalization, make sure sameQty/canonQty are defined above
+
+app.post('/api/item/resolve-by-item', async (req, res) => {
+  try {
+    const rawItem = String(req.body?.item ?? '').trim();
+    if (!rawItem) return res.status(400).json({ error: 'item_required' });
+
+    // Optional quantity; you already support string or {value,unit}
+    const qty = req.body?.quantity ?? null;
+
+    // Simple name search: exact or LIKE. Start with LIKE for broader matches.
+    const sql = `
+      SELECT id, name, brand, quantity, feature, productColor, picWebsite
+      FROM item
+      WHERE LOWER(name) LIKE LOWER(?)
+      ORDER BY name ASC
+      LIMIT 50
+    `;
+    const [rows] = await pool.query(sql, [`%${rawItem.toLowerCase()}%`]);
+
+    let candidates = rows.map(r => ({
+      id: String(r.id ?? ''),
+      name: String(r.name ?? ''),
+      brand: String(r.brand ?? ''),
+      quantity: String(r.quantity ?? ''),
+      feature: String(r.feature ?? ''),
+      productColor: String(r.productColor ?? ''),
+      picWebsite: String(r.picWebsite ?? ''),
+    }));
+
+    // If you want quantity filtering, reuse your sameQty function:
+    if (qty) {
+      candidates = candidates.filter(c => sameQty(qty, c.quantity));
+    }
+
+    const payload = {
+      exactId: (candidates.length === 1 ? candidates[0].id : null),
+      candidates
+    };
+    return res.json(payload);
+  } catch (e) {
+    console.error('POST /api/item/resolve-by-item error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
 // ------------------------------ Start server --------------------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
