@@ -847,6 +847,27 @@ app.post('/api/items/create-batch', async (req, res) => {
   }
 });
 
+
+app.post('/shops/add', async (req, res) => {
+  try {
+    const name = String(req.body?.name ?? '').trim();
+    if (!name) return res.status(400).json({ error: 'name_required' });
+
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'shop';
+
+    await pool.query(
+      'INSERT INTO chainShop (shopName, shopId) VALUES (?, ?)',
+      [name, id]
+    );
+
+    return res.status(201).json({ shopName: name, shopId: id });
+  } catch (e) {
+    console.error('shops/add error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+
 // ------------------------------ Start server --------------------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
