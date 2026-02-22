@@ -24,6 +24,8 @@ app.use('/api/shops', require('./routes/shops'));
 
 app.use('/api/items', itemsRouter);
 
+app.use('/api/prices', require('./routes/prices'));
+
 /* ------------------------------------------------------------------ */
 /*                          Key Management                             */
 /* ------------------------------------------------------------------ */
