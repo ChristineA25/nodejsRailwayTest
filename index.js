@@ -933,6 +933,52 @@ app.post('/api/shops/ensure-lite', async (req, res) => {
 });
 
 
+// --- Prices: batch create ----------------------------------------------------
+app.post('/api/prices/create-batch', async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    if (rows.length === 0) return res.status(400).json({ error: 'rows_required' });
+
+    // Validate minimally and build parameter rows
+    const out = [];
+    for (const r of rows) {
+      const itemID  = (r?.itemID ?? '').toString().trim();
+      const shopID  = (r?.shopID ?? '').toString().trim();
+      const channel = (r?.channel ?? '').toString().trim().toLowerCase(); // 'online'|'physical'
+      const date    = (r?.date ?? '').toString().trim();                  // 'YYYY-MM-DD'
+
+      if (!itemID || !shopID || !channel || !date) continue;
+
+      const normalPrice   = (r?.normalPrice ?? null);
+      const discountPrice = (r?.discountPrice ?? null);
+      const shopAdd       = (r?.shopAdd ?? null);
+      const discountCond  = (r?.discountCond ?? null);
+
+      // Only one of the two price columns should be set
+      const np = (normalPrice == null ? null : Number(normalPrice));
+      const dp = (discountPrice == null ? null : Number(discountPrice));
+      if ((np == null && dp == null) || (isNaN(np ?? NaN) && isNaN(dp ?? NaN))) continue;
+
+      out.push([channel, itemID, shopID, date, np, dp, shopAdd, discountCond]);
+    }
+
+    if (out.length === 0) return res.status(400).json({ error: 'no_valid_rows' });
+
+    const sql = `
+      INSERT INTO prices
+        (channel, itemID, shopID, date, normalPrice, discountPrice, shopAdd, discountCond)
+      VALUES ?
+    `;
+    await pool.query(sql, [out]);
+
+    return res.status(201).json({ count: out.length });
+  } catch (e) {
+    console.error('POST /api/prices/create-batch error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+
 // ------------------------------ Start server --------------------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
