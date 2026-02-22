@@ -107,4 +107,75 @@ router.get('/find', async (req, res) => {
   }
 });
 
+
+// routes/shops.js (CommonJS)
+'use strict';
+const express = require('express');
+const { pool } = require('../db');
+
+const router = express.Router();
+
+/** Make a safe slug for shopID from a display name (ASCII, hyphen-separated) */
+function slugify(raw) {
+  return String(raw || '')
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')    // strip diacritics
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')                          // non-alnum -> hyphen
+    .replace(/^-+|-+$/g, '')                              // trim edges
+    || 'shop';
+}
+
+/**
+ * POST /api/shops/ensure-lite
+ * Body: { name: string }
+ * Result: { created: boolean, shop: { shopID, shopName } }
+ *
+ * - Case-insensitive existence check on chainShop.shopName
+ * - If missing, inserts one row (shopName, shopID)
+ * - NO schema changes, NO extra columns
+ */
+router.post('/ensure-lite', async (req, res) => {
+  try {
+    const raw = String(req.body?.name ?? '').trim();
+    if (!raw) return res.status(400).json({ error: 'name_required' });
+
+    // 1) Does it already exist? (case-insensitive)
+    const [exist] = await pool.query(
+      'SELECT `shopID`, `shopName` FROM `chainShop` WHERE LOWER(`shopName`) = LOWER(?) LIMIT 1',
+      [raw]
+    );
+    if (exist.length) {
+      return res.json({ created: false, shop: exist[0] });
+    }
+
+    // 2) Generate a unique shopID slug without migrations
+    const base = slugify(raw);
+    let candidate = base;
+    let n = 1;
+    // Ensure uniqueness on shopID
+    for (;;) {
+      const [hit] = await pool.query(
+        'SELECT 1 FROM `chainShop` WHERE `shopID` = ? LIMIT 1',
+        [candidate]
+      );
+      if (hit.length === 0) break;
+      candidate = `${base}-${n++}`;
+    }
+
+    // 3) Insert the new shop
+    await pool.query(
+      'INSERT INTO `chainShop` (`shopName`, `shopID`) VALUES (?, ?)',
+      [raw, candidate]
+    );
+
+    return res.status(201).json({
+      created: true,
+      shop: { shopID: candidate, shopName: raw }
+    });
+  } catch (e) {
+    console.error('POST /api/shops/ensure-lite error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
 module.exports = router;
