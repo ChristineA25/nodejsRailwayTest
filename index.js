@@ -860,6 +860,20 @@ app.post('/shops/add', async (req, res) => {
       [name, id]
     );
 
+    
+  await pool.query(
+    `INSERT INTO chainShop (shopName, shopID)
+       SELECT ?, ?
+         FROM DUAL
+        WHERE NOT EXISTS (
+          SELECT 1
+            FROM chainShop
+          WHERE LOWER(shopName) = LOWER(?)
+        )`,
+    [name, id, name]
+  );
+
+
     return res.status(201).json({ shopName: name, shopId: id });
   } catch (e) {
     console.error('shops/add error:', e);
