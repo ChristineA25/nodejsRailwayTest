@@ -856,7 +856,7 @@ app.post('/shops/add', async (req, res) => {
     const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'shop';
 
     await pool.query(
-      'INSERT INTO chainShop (shopName, shopId) VALUES (?, ?)',
+      'INSERT INTO chainShop (shopName, shopID) VALUES (?, ?)',
       [name, id]
     );
 
