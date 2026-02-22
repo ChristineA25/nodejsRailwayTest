@@ -882,6 +882,260 @@ app.post('/shops/add', async (req, res) => {
 });
 
 
+// ---------- PRICES API (ESM) ----------
+// Paste this block in your 53a4 ESM index.js, below other routes, before app.listen
+
+// Money/date helpers
+function toMoney(v) {
+  if (v == null || v === '') return null;
+  const s = String(v).replace(/[^\d.\-]/g, ''); // drop currency symbols/commas
+  if (!s) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  // keep 2dp
+  return Math.round(n * 100) / 100;
+}
+function isIsoDate(s) { return /^\d{4}-\d{2}-\d{2}$/.test(String(s || '')); }
+function todayISO() { return new Date().toISOString().slice(0, 10); }
+const tidy = (v) => (v == null ? null : (String(v).trim() || null));
+
+/**
+ * POST /api/prices
+ * Body: {
+ *   itemID: string,      // required
+ *   shopID?: string,
+ *   channel?: string,
+ *   normalPrice: number|string, // required (e.g. "£1.25" ok)
+ *   memberPrice?: number|string,
+ *   date?: "YYYY-MM-DD", // default: today (UTC)
+ *   shopAdd?: string
+ * }
+ */
+app.post('/api/prices', async (req, res) => {
+  try {
+    const itemID = tidy(req.body?.itemID);
+    const shopID = tidy(req.body?.shopID);
+    const channel = tidy(req.body?.channel);
+    const shopAdd = tidy(req.body?.shopAdd);
+
+    const normalPrice = toMoney(req.body?.normalPrice);
+    const memberPrice = toMoney(req.body?.memberPrice);
+    const date = isIsoDate(req.body?.date) ? req.body.date : todayISO();
+
+    if (!itemID) return res.status(400).json({ error: 'itemID_required' });
+    if (normalPrice == null) return res.status(400).json({ error: 'normalPrice_required' });
+
+    const sql = `
+      INSERT INTO prices
+        (channel, itemID, shopID, normalPrice, date, memberPrice, shopAdd)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `;
+    const params = [channel, itemID, shopID, normalPrice, date, memberPrice, shopAdd];
+
+    const [result] = await pool.query(sql, params);
+    // insertId is present for AUTO_INCREMENT PKs; if your 'id' isn't auto-inc, it's fine.
+    return res.status(201).json({ ok: true, id: result?.insertId ?? null });
+  } catch (e) {
+    console.error('POST /api/prices error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+/**
+ * POST /api/prices/batch
+ * Body: { prices: [ { ...same fields as /api/prices... }, ... ] }
+ */
+app.post('/api/prices/batch', async (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.prices) ? req.body.prices : [];
+    if (!items.length) return res.status(400).json({ error: 'prices_required' });
+
+    const rows = [];
+    for (const p of items) {
+      const itemID = tidy(p?.itemID);
+      const shopID = tidy(p?.shopID);
+      const channel = tidy(p?.channel);
+      const shopAdd = tidy(p?.shopAdd);
+
+      const normalPrice = toMoney(p?.normalPrice);
+      const memberPrice = toMoney(p?.memberPrice);
+      const date = isIsoDate(p?.date) ? p.date : todayISO();
+
+      if (!itemID || normalPrice == null) continue; // skip invalid
+
+      rows.push([channel, itemID, shopID, normalPrice, date, memberPrice, shopAdd]);
+    }
+    if (!rows.length) return res.status(400).json({ error: 'no_valid_rows' });
+
+    const sql = `
+      INSERT INTO prices
+        (channel, itemID, shopID, normalPrice, date, memberPrice, shopAdd)
+      VALUES ?
+    `;
+    await pool.query(sql, [rows]);
+    return res.status(201).json({ ok: true, count: rows.length });
+  } catch (e) {
+    console.error('POST /api/prices/batch error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+/**
+ * GET /api/prices
+ * Query params:
+ *  itemID?: string
+ *  shopID?: string
+ *  channel?: string
+ *  from?: YYYY-MM-DD
+ *  to?: YYYY-MM-DD
+ *  limit?: number (default 200, max 1000)
+ *  offset?: number (default 0)
+ */
+app.get('/api/prices', async (req, res) => {
+  try {
+    const where = [];
+    const params = [];
+
+    const itemID = tidy(req.query?.itemID);
+    const shopID = tidy(req.query?.shopID);
+    const channel = tidy(req.query?.channel);
+    const from = isIsoDate(req.query?.from) ? req.query.from : null;
+    const to   = isIsoDate(req.query?.to)   ? req.query.to   : null;
+
+    if (itemID)  { where.push('p.`itemID` = ?');     params.push(itemID); }
+    if (shopID)  { where.push('p.`shopID` = ?');     params.push(shopID); }
+    if (channel) { where.push('p.`channel` = ?');    params.push(channel); }
+    if (from)    { where.push('p.`date` >= ?');      params.push(from); }
+    if (to)      { where.push('p.`date` <= ?');      params.push(to); }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const limit = Math.max(1, Math.min(parseInt(String(req.query?.limit ?? '200'), 10) || 200, 1000));
+    const offset = Math.max(0, parseInt(String(req.query?.offset ?? '0'), 10) || 0);
+
+    const sql = `
+      SELECT p.\`id\`, p.\`channel\`, p.\`itemID\`, p.\`shopID\`,
+             p.\`normalPrice\`, p.\`memberPrice\`, p.\`date\`, p.\`shopAdd\`
+        FROM \`prices\` p
+        ${whereSql}
+    ORDER BY p.\`date\` DESC, p.\`id\` DESC
+       LIMIT ? OFFSET ?
+    `;
+    const finalParams = [...params, limit, offset];
+
+    const [rows] = await pool.query(sql, finalParams);
+
+    // mysql2 returns DECIMAL as strings by default; convert to Number for convenience
+    const items = rows.map(r => ({
+      id: r.id,
+      channel: r.channel ?? null,
+      itemID: r.itemID ?? null,
+      shopID: r.shopID ?? null,
+      normalPrice: r.normalPrice != null ? Number(r.normalPrice) : null,
+      memberPrice: r.memberPrice != null ? Number(r.memberPrice) : null,
+      date: r.date,     // 'YYYY-MM-DD' if DATE column; DATETIME will include time
+      shopAdd: r.shopAdd ?? null,
+    }));
+
+    return res.json({ count: items.length, items });
+  } catch (e) {
+    console.error('GET /api/prices error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+/**
+ * GET /api/prices/latest
+ * Latest price for each (itemID, shopID, channel) group; supports filters
+ * Params: itemID?, shopID?, channel?, limit?
+ */
+app.get('/api/prices/latest', async (req, res) => {
+  try {
+    const where = [];
+    const params = [];
+
+    const itemID = tidy(req.query?.itemID);
+    const shopID = tidy(req.query?.shopID);
+    const channel = tidy(req.query?.channel);
+
+    if (itemID)  { where.push('p.`itemID` = ?');  params.push(itemID); }
+    if (shopID)  { where.push('p.`shopID` = ?');  params.push(shopID); }
+    if (channel) { where.push('p.`channel` = ?'); params.push(channel); }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const limit = Math.max(1, Math.min(parseInt(String(req.query?.limit ?? '200'), 10) || 200, 1000));
+
+    const sql = `
+      SELECT *
+      FROM (
+        SELECT p.*,
+               ROW_NUMBER() OVER (
+                 PARTITION BY p.itemID, p.shopID, p.channel
+                 ORDER BY p.date DESC, p.id DESC
+               ) AS rn
+        FROM prices p
+        ${whereSql}
+      ) t
+      WHERE t.rn = 1
+      ORDER BY t.date DESC, t.id DESC
+      LIMIT ?
+    `;
+    const [rows] = await pool.query(sql, [...params, limit]);
+
+    const items = rows.map(r => ({
+      id: r.id,
+      channel: r.channel ?? null,
+      itemID: r.itemID ?? null,
+      shopID: r.shopID ?? null,
+      normalPrice: r.normalPrice != null ? Number(r.normalPrice) : null,
+      memberPrice: r.memberPrice != null ? Number(r.memberPrice) : null,
+      date: r.date,
+      shopAdd: r.shopAdd ?? null,
+    }));
+
+    return res.json({ count: items.length, items });
+  } catch (e) {
+    console.error('GET /api/prices/latest error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+/**
+ * GET /api/items/:id/prices
+ * Shortcut to fetch prices for a single item
+ */
+app.get('/api/items/:id/prices', async (req, res) => {
+  try {
+    const itemID = tidy(req.params?.id);
+    if (!itemID) return res.status(400).json({ error: 'itemID_required' });
+
+    const [rows] = await pool.query(
+      `SELECT id, channel, itemID, shopID, normalPrice, memberPrice, date, shopAdd
+         FROM prices
+        WHERE itemID = ?
+        ORDER BY date DESC, id DESC`,
+      [itemID]
+    );
+
+    const items = rows.map(r => ({
+      id: r.id,
+      channel: r.channel ?? null,
+      itemID: r.itemID ?? null,
+      shopID: r.shopID ?? null,
+      normalPrice: r.normalPrice != null ? Number(r.normalPrice) : null,
+      memberPrice: r.memberPrice != null ? Number(r.memberPrice) : null,
+      date: r.date,
+      shopAdd: r.shopAdd ?? null,
+    }));
+
+    return res.json({ count: items.length, items });
+  } catch (e) {
+    console.error('GET /api/items/:id/prices error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+
 // ------------------------------ Start server --------------------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
