@@ -882,6 +882,57 @@ app.post('/shops/add', async (req, res) => {
 });
 
 
+// --- Ensure-lite (ESM) ------------------------------------------------------
+function slugify(raw) {
+  return String(raw || '')
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'shop';
+}
+
+app.post('/api/shops/ensure-lite', async (req, res) => {
+  try {
+    const raw = String(req.body?.name ?? '').trim();
+    if (!raw) return res.status(400).json({ error: 'name_required' });
+
+    // Case-insensitive existence check
+    const [exist] = await pool.query(
+      'SELECT `shopID`, `shopName` FROM `chainShop` WHERE LOWER(`shopName`) = LOWER(?) LIMIT 1',
+      [raw]
+    );
+    if (exist.length) {
+      return res.json({ created: false, shop: exist[0] });
+    }
+
+    // Generate a unique slug for shopID
+    const base = slugify(raw);
+    let candidate = base, n = 1;
+    for (;;) {
+      const [hit] = await pool.query(
+        'SELECT 1 FROM `chainShop` WHERE `shopID` = ? LIMIT 1',
+        [candidate]
+      );
+      if (hit.length === 0) break;
+      candidate = `${base}-${n++}`;
+    }
+
+    await pool.query(
+      'INSERT INTO `chainShop` (`shopName`, `shopID`) VALUES (?, ?)',
+      [raw, candidate]
+    );
+
+    return res.status(201).json({
+      created: true,
+      shop: { shopID: candidate, shopName: raw }
+    });
+  } catch (e) {
+    console.error('POST /api/shops/ensure-lite error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+
 // ------------------------------ Start server --------------------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
