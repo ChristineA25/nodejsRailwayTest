@@ -102,6 +102,10 @@ function sameQty(userQ, dbQ) {
 }
 
 
+import itemInputRouter from './routes/itemInput.js';
+app.use('/api/itemInput', itemInputRouter);
+
+
 // -------------------------- Root & health -----------------------------------
 app.get('/', (_req, res) => res.send('API is running'));
 app.get('/health', async (_req, res) => {
