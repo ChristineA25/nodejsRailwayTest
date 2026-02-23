@@ -54,7 +54,7 @@ router.post("/", async (req, res) => {
     const sql = `
       INSERT INTO itemInput
       (userID, brand, itemName, itemID, itemNo, feature,
-       quantity, itemCount, priceValue, priceID, discountApplied,
+       quantity, itemNo, priceValue, priceID, discountApplied,
        channel, shop_name, shop_address, chainShopID, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
