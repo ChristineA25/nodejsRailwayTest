@@ -1143,6 +1143,28 @@ app.put('/api/prices/:id', async (req, res) => {
 });
 
 
+// Add this to index.js (ESM) on the 53a4 service, next to other /api/items routes
+app.get('/api/items/screenshot', async (_req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT DISTINCT TRIM(name) AS item
+      FROM ScreenshotItems
+      WHERE name IS NOT NULL AND TRIM(name) <> ''
+      ORDER BY LOWER(TRIM(name)) ASC
+    `);
+    const items = (Array.isArray(rows) ? rows : [])
+      .map(r => (r.item || '').toString().trim())
+      .filter(Boolean);
+    res.json({ items });
+  } catch (err) {
+    console.error('GET /api/items/screenshot failed:', err);
+    res.status(500).json({ error: 'Failed to fetch screenshot items' });
+  }
+});
+
+// Optional: backwards-compatible alias for the typo path your app used
+app.get('/items-screenshot', (req, res) => res.redirect(301, '/api/items/screenshot'));
+
 
 // ------------------------------ Start server --------------------------------
 const port = process.env.PORT || 3000;
