@@ -292,6 +292,41 @@ router.post('/api/item/resolve-by-item', async (req, res) => {
   }
 });
 
+
+// POST /api/item-input  (CommonJS variant)
+app.post('/api/item-input', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.itemID)      return res.status(400).json({ error: 'itemID_required' });
+    if (!b.priceID)     return res.status(400).json({ error: 'priceID_required' });
+    if (!b.chainShopID) return res.status(400).json({ error: 'chainShopID_required' });
+
+    const discountApplied =
+      (b.discountApplied === true || b.discountApplied === 1 || b.discountApplied === '1') ? 1 : 0;
+
+    const sql = `
+      INSERT INTO itemInput
+        (userID, brand, itemName, itemNo, itemID, feature, quantity,
+         priceValue, priceID, discountApplied, channel, shop_name, shop_address,
+         chainShopID, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+    `;
+    const params = [
+      b.userID ?? null, b.brand ?? null, b.itemName ?? null, b.itemNo ?? null,
+      String(b.itemID), b.feature ?? null, b.quantity ?? null,
+      b.priceValue ?? null, Number(b.priceID), discountApplied,
+      (b.channel ?? null), b.shop_name ?? null, b.shop_address ?? null,
+      String(b.chainShopID), b.createdAt ?? null
+    ];
+    const [result] = await pool.execute(sql, params);
+    res.status(201).json({ id: result.insertId });
+  } catch (e) {
+    console.error('POST /api/item-input error:', e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+
 /* ------------------------------------------------------------------ */
 /*                           404                                       */
 /* ------------------------------------------------------------------ */
