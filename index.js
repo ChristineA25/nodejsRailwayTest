@@ -9,6 +9,21 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '512kb' }));
 
+// Request logger (dev only)
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`\n[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+    if (req.method !== 'GET') {
+      try {
+        console.log('Body:', JSON.stringify(req.body, null, 2));
+      } catch (_) {
+        console.log('Body:', req.body);
+      }
+    }
+  }
+  next();
+});
+
 // Optional API key gate (set API_KEY on Railway)
 const API_KEY = process.env.API_KEY || null;
 app.use((req, res, next) => {
