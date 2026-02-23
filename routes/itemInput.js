@@ -7,7 +7,7 @@ import crypto from "crypto";
 
 const router = express.Router();
 
-// POST /api/itemInput
+
 router.post("/", async (req, res) => {
   try {
     const {
@@ -15,24 +15,42 @@ router.post("/", async (req, res) => {
       brand,
       itemName,
       itemID,
-      itemNo,               // NEW
+      itemNo,
       feature,
       quantity,
       itemCount,
       priceValue,
-      priceID,             // NEW
-      discountApplied,     // NEW
+      priceID,
+      discountApplied,
       channel,
       shop_name,
       shop_address,
-      chainShopID          // NEW
+      chainShopID
     } = req.body || {};
 
-    if (!userID) return res.status(400).json({ error: "userID_required" });
+    if (!userID)   return res.status(400).json({ error: "userID_required" });
     if (!itemName) return res.status(400).json({ error: "itemName_required" });
-    if (!priceValue) return res.status(400).json({ error: "price_required" });
+    if (priceValue == null || priceValue === '') {
+      return res.status(400).json({ error: "price_required" });
+    }
 
-    // NEW SQL with all required DB columns
+    // Normalize
+    const normChannel = (channel ?? '').toString().trim().toLowerCase();
+    const chanFinal = (normChannel === 'online' || normChannel === 'physical')
+      ? normChannel
+      : null; // let DB accept NULL if column is nullable, or reject clearly below
+
+    // Tinyint(1) friendly boolean
+    const discFinal =
+      typeof discountApplied === 'boolean'
+        ? (discountApplied ? 1 : 0)
+        : (discountApplied == null ? null : (String(discountApplied).toLowerCase() === 'true' ? 1 : 0));
+
+    if (!chanFinal) {
+      // If your DB has NOT NULL/ENUM for channel, fail early with a clear message
+      return res.status(400).json({ error: "channel_must_be_online_or_physical" });
+    }
+
     const sql = `
       INSERT INTO itemInput
       (userID, brand, itemName, itemID, itemNo, feature,
@@ -41,20 +59,19 @@ router.post("/", async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    // VALUES array matching the DB columns exactly
     await pool.execute(sql, [
-      userID,
+      String(userID),
       brand ?? null,
-      itemName,
+      String(itemName),
       itemID ?? null,
       itemNo ?? null,
       feature ?? null,
       quantity ?? null,
-      itemCount ?? 1,
-      priceValue,
+      (itemCount == null || itemCount === '') ? 1 : Number(itemCount),
+      Number(priceValue),
       priceID ?? crypto.randomUUID(),
-      discountApplied ?? null,
-      channel,
+      discFinal,                    // 0/1/null
+      chanFinal,                    // 'online' | 'physical'
       shop_name ?? null,
       shop_address ?? null,
       chainShopID ?? crypto.randomUUID(),
@@ -64,8 +81,16 @@ router.post("/", async (req, res) => {
     res.status(201).json({ ok: true });
   } catch (err) {
     console.error("POST /api/itemInput error:", err);
-    res.status(500).json({ error: "server_error" });
+    // Expose cause for now; lock down in production if needed.
+    res.status(500).json({
+      error: "server_error",
+      code: err?.code,
+      errno: err?.errno,
+      sqlState: err?.sqlState,
+      sqlMessage: err?.sqlMessage
+    });
   }
 });
+
 
 export default router;
