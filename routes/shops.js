@@ -178,4 +178,62 @@ router.post('/ensure-lite', async (req, res) => {
   }
 });
 
+
+/**
+ * GET /api/shops/names
+ * Returns just a sorted list of distinct shop display names.
+ * This mirrors how your UI lists brands.
+ */
+router.get('/names', async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT DISTINCT `shopName` AS name FROM `chainShop` WHERE `shopName` IS NOT NULL AND `shopName` <> "" ORDER BY `shopName` ASC'
+    );
+    const shops = rows.map(r => (r.name ?? '').toString().trim()).filter(Boolean);
+    return res.json({ shops });
+  } catch (e) {
+    console.error('GET /api/shops/names error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+
+/**
+ * GET /api/shops
+ * Returns full rows (including optional metadata you have in the screenshot).
+ * Visible columns from your table: shopName, shopID, phoneCountryCode, founder, foundingDate, website
+ */
+router.get('/', async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT `shopName`, `shopID`, `phoneCountryCode`, `founder`, `foundingDate`, `website` FROM `chainShop` ORDER BY `shopName` ASC'
+    );
+    return res.json({ shops: rows });
+  } catch (e) {
+    console.error('GET /api/shops error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+
+/**
+ * GET /api/shops/:shopID
+ * Fetch a single shop (by canonical ID).
+ */
+router.get('/:shopID', async (req, res) => {
+  try {
+    const id = String(req.params.shopID || '').trim();
+    if (!id) return res.status(400).json({ error: 'shopID_required' });
+    const [rows] = await pool.query(
+      'SELECT `shopName`, `shopID`, `phoneCountryCode`, `founder`, `foundingDate`, `website` FROM `chainShop` WHERE `shopID` = ? LIMIT 1',
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'shop_not_found' });
+    return res.json({ shop: rows[0] });
+  } catch (e) {
+    console.error('GET /api/shops/:shopID error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
 module.exports = router;
