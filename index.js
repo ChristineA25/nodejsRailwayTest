@@ -1100,6 +1100,33 @@ app.get('/api/prices', async (req, res) => {
 });
 
 
+app.put('/api/prices/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { normalPrice, discountPrice, discountCond } = req.body;
+
+    const sql = `
+      UPDATE prices
+      SET normalPrice = ?,
+          discountPrice = ?,
+          discountCond = ?
+      WHERE id = ?
+    `;
+    await pool.execute(sql, [
+      normalPrice ?? null,
+      discountPrice ?? null,
+      discountCond ?? null,
+      id,
+    ]);
+
+    return res.json({ updated: true, id: Number(id) });
+  } catch (e) {
+    console.error('PUT /api/prices/:id error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+
 // ------------------------------ Start server --------------------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
