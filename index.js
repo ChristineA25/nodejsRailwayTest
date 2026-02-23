@@ -1154,30 +1154,36 @@ app.put('/api/prices/:id', async (req, res) => {
 });
 
 
-// --- ItemInput: create one row ------------------------------------------------
-// POST /api/item-input
-// Body: { userID?, brand?, itemName?, itemNo?, itemID, feature?, quantity?,
-//         priceValue?, priceID, discountApplied?(0|1|bool),
-//         channel?, shop_name?, shop_address?, chainShopID, createdAt? }
+
+// FINAL — Correct for your MySQL table EXACTLY as shown
 app.post('/api/item-input', async (req, res) => {
   try {
     const b = req.body || {};
-    // required FKs
+
+    // Required fields
     if (!b.itemID)      return res.status(400).json({ error: 'itemID_required' });
     if (!b.priceID)     return res.status(400).json({ error: 'priceID_required' });
     if (!b.chainShopID) return res.status(400).json({ error: 'chainShopID_required' });
 
+    // Booleans → 0/1
     const discountApplied =
-      (b.discountApplied === true || b.discountApplied === 1 || b.discountApplied === '1') ? 1 : 0;
+      (b.discountApplied === true ||
+       b.discountApplied === 1 ||
+       b.discountApplied === '1') ? 1 : 0;
 
-    // Let DB default createdAt if not supplied
+    // Channel (store as lower-case)
+    const channel = (b.channel ?? '').toString().trim().toLowerCase() || null;
+
+    // Insert EXACT columns from your table:
     const sql = `
       INSERT INTO itemInput
         (userID, brand, itemName, itemNo, itemID, feature, quantity,
-         priceValue, priceID, discountApplied, channel, shop_name, shop_address,
-         chainShopID, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+         priceValue, priceID, discountApplied, channel,
+         shop_name, shop_address, chainShopID, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
+         COALESCE(?, CURRENT_TIMESTAMP))
     `;
+
     const params = [
       b.userID ?? null,
       b.brand ?? null,
@@ -1189,20 +1195,31 @@ app.post('/api/item-input', async (req, res) => {
       b.priceValue ?? null,
       Number(b.priceID),
       discountApplied,
-      (b.channel ?? null),
+      channel,
+      // Your table uses snake_case
       b.shop_name ?? null,
       b.shop_address ?? null,
       String(b.chainShopID),
       b.createdAt ?? null
     ];
 
+    console.log("[item-input] inserting:", params);
+
     const [result] = await pool.execute(sql, params);
     return res.status(201).json({ id: result.insertId });
+
   } catch (e) {
-    console.error('POST /api/item-input error:', e);
-    return res.status(500).json({ error: 'server_error' });
+    console.error("POST /api/item-input error:", e);
+    return res.status(500).json({
+      error: "server_error",
+      code: e.code,
+      errno: e.errno,
+      sqlState: e.sqlState,
+      sqlMessage: e.sqlMessage
+    });
   }
 });
+
 
 
 // POST /api/item-input
