@@ -1,9 +1,11 @@
 
-// routes/itemInput.js
-const express = require("express");
+// routes/itemInput.js (ESM)
+
+import express from "express";
+import { pool } from "../db.js";
+import crypto from "crypto";
+
 const router = express.Router();
-const { pool } = require("../db");
-const crypto = require("crypto"); // NEW for generating UUIDs
 
 // POST /api/itemInput
 router.post("/", async (req, res) => {
@@ -30,7 +32,7 @@ router.post("/", async (req, res) => {
     if (!itemName) return res.status(400).json({ error: "itemName_required" });
     if (!priceValue) return res.status(400).json({ error: "price_required" });
 
-    // 🔥 NEW SQL with all required DB columns
+    // NEW SQL with all required DB columns
     const sql = `
       INSERT INTO itemInput
       (userID, brand, itemName, itemID, itemNo, feature,
@@ -39,7 +41,7 @@ router.post("/", async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    // 🔥 NEW VALUES ARRAY matching your DB columns exactly
+    // VALUES array matching the DB columns exactly
     await pool.execute(sql, [
       userID,
       brand ?? null,
@@ -50,13 +52,13 @@ router.post("/", async (req, res) => {
       quantity ?? null,
       itemCount ?? 1,
       priceValue,
-      priceID ?? crypto.randomUUID(),     // NEW
-      discountApplied ?? null,            // NEW
+      priceID ?? crypto.randomUUID(),
+      discountApplied ?? null,
       channel,
       shop_name ?? null,
       shop_address ?? null,
-      chainShopID ?? crypto.randomUUID(), // NEW
-      new Date()                          // createdAt
+      chainShopID ?? crypto.randomUUID(),
+      new Date()
     ]);
 
     res.status(201).json({ ok: true });
@@ -65,7 +67,5 @@ router.post("/", async (req, res) => {
     res.status(500).json({ error: "server_error" });
   }
 });
-
-module.exports = router;
 
 export default router;
