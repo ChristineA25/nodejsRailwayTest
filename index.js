@@ -935,56 +935,15 @@ app.post('/api/shops/ensure-lite', async (req, res) => {
 
 
 
-// --- Prices: batch create (supports optional `id`) ---------------------------
 app.post('/api/prices/create-batch', async (req, res) => {
   try {
-    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
-    if (rows.length === 0) return res.status(400).json({ error: 'rows_required' });
+    console.log('Incoming /api/prices/create-batch payload:', JSON.stringify(req.body, null, 2));
+    // ... existing parsing ...
 
-    // Split rows into two groups: with id, and without id
-    const withId = [];
-    const withoutId = [];
+    console.log('Prepared rows - withId:', withId.length, 'withoutId:', withoutId.length);
 
-    for (const r of rows) {
-      const id      = (r?.id ?? null);
-      const itemID  = (r?.itemID ?? '').toString().trim();
-      const shopID  = (r?.shopID ?? '').toString().trim();
-      const channel = (r?.channel ?? '').toString().trim().toLowerCase(); // 'online'|'physical'
-      const date    = (r?.date ?? '').toString().trim();                  // 'YYYY-MM-DD'
-
-      if (!itemID || !shopID || !channel || !date) continue;
-
-      const normalPrice   = (r?.normalPrice ?? null);
-      const discountPrice = (r?.discountPrice ?? null);
-      const shopAdd       = (r?.shopAdd ?? null);
-      const discountCond  = (r?.discountCond ?? null);
-
-      const np = (normalPrice == null ? null : Number(normalPrice));
-      const dp = (discountPrice == null ? null : Number(discountPrice));
-      if ((np == null && dp == null) || (isNaN(np ?? NaN) && isNaN(dp ?? NaN))) continue;
-
-      const base = [channel, itemID, shopID, date, np, dp, shopAdd, discountCond];
-
-      if (id != null && `${id}`.trim() !== '') {
-        // Ensure numeric if your schema is numeric
-        const idNum = Number(id);
-        if (!Number.isNaN(idNum)) {
-          withId.push([idNum, ...base]);
-        } else {
-          // If id is not numeric, you can push as string and match schema type
-          withId.push([String(id), ...base]);
-        }
-      } else {
-        withoutId.push(base);
-      }
-    }
-
-    if (withId.length === 0 && withoutId.length === 0) {
-      return res.status(400).json({ error: 'no_valid_rows' });
-    }
-
-    // Insert those WITH id
     if (withId.length) {
+      console.log('Executing INSERT WITH ID, sample row:', withId[0]);
       const sqlWithId = `
         INSERT INTO \`prices\`
           (\`id\`, \`channel\`, \`itemID\`, \`shopID\`, \`date\`, \`normalPrice\`, \`discountPrice\`, \`shopAdd\`, \`discountCond\`)
@@ -993,8 +952,8 @@ app.post('/api/prices/create-batch', async (req, res) => {
       await pool.query(sqlWithId, [withId]);
     }
 
-    // Insert those WITHOUT id
     if (withoutId.length) {
+      console.log('Executing INSERT WITHOUT ID, sample row:', withoutId[0]);
       const sqlNoId = `
         INSERT INTO \`prices\`
           (\`channel\`, \`itemID\`, \`shopID\`, \`date\`, \`normalPrice\`, \`discountPrice\`, \`shopAdd\`, \`discountCond\`)
@@ -1006,9 +965,17 @@ app.post('/api/prices/create-batch', async (req, res) => {
     return res.status(201).json({ count: withId.length + withoutId.length });
   } catch (e) {
     console.error('POST /api/prices/create-batch error:', e);
-    return res.status(500).json({ error: 'server_error' });
+    // TEMP: surface details to the client to unblock you
+    return res.status(500).json({
+      error: 'server_error',
+      code: e?.code,
+      errno: e?.errno,
+      sqlState: e?.sqlState,
+      sqlMessage: e?.sqlMessage
+    });
   }
 });
+
 
 
 // --------------------------- Prices: fetch all -------------------------------
