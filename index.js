@@ -1100,31 +1100,44 @@ app.get('/api/prices', async (req, res) => {
 });
 
 
+
+// C: FIXED PARTIAL UPDATE (only updates fields included in req.body)
 app.put('/api/prices/:id', async (req, res) => {
   try {
     const id = req.params.id;
-    const { normalPrice, discountPrice, discountCond } = req.body;
+    const fields = [];
+    const values = [];
 
-    const sql = `
-      UPDATE prices
-      SET normalPrice = ?,
-          discountPrice = ?,
-          discountCond = ?
-      WHERE id = ?
-    `;
-    await pool.execute(sql, [
-      normalPrice ?? null,
-      discountPrice ?? null,
-      discountCond ?? null,
-      id,
-    ]);
+    // Only update fields that exist in req.body
+    if ('normalPrice' in req.body) {
+      fields.push('normalPrice = ?');
+      values.push(req.body.normalPrice);
+    }
+    if ('discountPrice' in req.body) {
+      fields.push('discountPrice = ?');
+      values.push(req.body.discountPrice);
+    }
+    if ('discountCond' in req.body) {
+      fields.push('discountCond = ?');
+      values.push(req.body.discountCond);
+    }
 
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    const sql = `UPDATE prices SET ${fields.join(', ')} WHERE id = ?`;
+    values.push(id);
+
+    await pool.execute(sql, values);
     return res.json({ updated: true, id: Number(id) });
+
   } catch (e) {
     console.error('PUT /api/prices/:id error:', e);
     return res.status(500).json({ error: 'server_error' });
   }
 });
+
 
 
 // ------------------------------ Start server --------------------------------
