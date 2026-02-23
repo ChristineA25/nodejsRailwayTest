@@ -935,28 +935,78 @@ app.post('/api/shops/ensure-lite', async (req, res) => {
 
 
 
+
 app.post('/api/prices/create-batch', async (req, res) => {
   try {
-    console.log('Incoming /api/prices/create-batch payload:', JSON.stringify(req.body, null, 2));
-    // ... existing parsing ...
+    // Expecting { rows: [ ... ] }
+    const rawRows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    if (rawRows.length === 0) {
+      return res.status(400).json({ error: 'rows_required' });
+    }
 
-    console.log('Prepared rows - withId:', withId.length, 'withoutId:', withoutId.length);
+    // Helper to coerce nullable strings
+    const s = (v) => (v == null || v === '' ? null : String(v));
+    // Helper to coerce nullable numbers
+    const n = (v) => (v == null || v === '' ? null : Number(v));
+
+    const withId = [];
+    const withoutId = [];
+
+    for (const r of rawRows) {
+      // Accept both camelCase and lower/underscore forms defensively
+      const id            = r.id ?? r.ID ?? null;
+      const channel       = s(r.channel);
+      const itemID        = s(r.itemID ?? r.itemId);
+      const shopID        = s(r.shopID ?? r.shopId);
+      const date          = s(r.date); // Expect 'YYYY-MM-DD'
+      const normalPrice   = n(r.normalPrice);
+      const discountPrice = n(r.discountPrice);
+      const shopAdd       = s(r.shopAdd);
+      const discountCond  = s(r.discountCond);
+
+      // Minimal validation: need itemID, shopID, channel, date or price
+      if (!itemID || !shopID || !channel || !date) {
+        // skip invalid row
+        continue;
+      }
+
+      const row = [
+        channel?.toLowerCase(), // normalize to 'online' | 'physical'
+        itemID,
+        shopID,
+        date,
+        normalPrice,
+        discountPrice,
+        shopAdd,
+        discountCond
+      ];
+
+      if (id != null) {
+        withId.push([Number(id), ...row]);
+      } else {
+        withoutId.push(row);
+      }
+    }
+
+    if (withId.length === 0 && withoutId.length === 0) {
+      return res.status(400).json({ error: 'no_valid_rows' });
+    }
 
     if (withId.length) {
-      console.log('Executing INSERT WITH ID, sample row:', withId[0]);
       const sqlWithId = `
         INSERT INTO \`prices\`
-          (\`id\`, \`channel\`, \`itemID\`, \`shopID\`, \`date\`, \`normalPrice\`, \`discountPrice\`, \`shopAdd\`, \`discountCond\`)
+          (\`id\`, \`channel\`, \`itemID\`, \`shopID\`, \`date\`,
+           \`normalPrice\`, \`discountPrice\`, \`shopAdd\`, \`discountCond\`)
         VALUES ?
       `;
       await pool.query(sqlWithId, [withId]);
     }
 
     if (withoutId.length) {
-      console.log('Executing INSERT WITHOUT ID, sample row:', withoutId[0]);
       const sqlNoId = `
         INSERT INTO \`prices\`
-          (\`channel\`, \`itemID\`, \`shopID\`, \`date\`, \`normalPrice\`, \`discountPrice\`, \`shopAdd\`, \`discountCond\`)
+          (\`channel\`, \`itemID\`, \`shopID\`, \`date\`,
+           \`normalPrice\`, \`discountPrice\`, \`shopAdd\`, \`discountCond\`)
         VALUES ?
       `;
       await pool.query(sqlNoId, [withoutId]);
@@ -965,7 +1015,6 @@ app.post('/api/prices/create-batch', async (req, res) => {
     return res.status(201).json({ count: withId.length + withoutId.length });
   } catch (e) {
     console.error('POST /api/prices/create-batch error:', e);
-    // TEMP: surface details to the client to unblock you
     return res.status(500).json({
       error: 'server_error',
       code: e?.code,
@@ -975,7 +1024,6 @@ app.post('/api/prices/create-batch', async (req, res) => {
     });
   }
 });
-
 
 
 // --------------------------- Prices: fetch all -------------------------------
