@@ -12,11 +12,6 @@ const router = express.Router();
  * Returns: { count, rows: [...] }
  */
 
-
-router.put('/:id', async (req, res) => {
-   // update normalPrice, discountPrice, discountCond
-});
-
 router.get('/', async (req, res) => {
   try {
     const {
@@ -74,5 +69,35 @@ router.get('/', async (req, res) => {
     return res.status(500).json({ error: 'server_error' });
   }
 });
+
+
+// UPDATE an existing price row by id
+router.put('/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { normalPrice, discountPrice, discountCond } = req.body;
+
+    const sql = `
+      UPDATE \`prices\`
+      SET \`normalPrice\` = ?,
+          \`discountPrice\` = ?,
+          \`discountCond\` = ?
+      WHERE \`id\` = ?
+    `;
+
+    await pool.execute(sql, [
+      normalPrice ?? null,
+      discountPrice ?? null,
+      discountCond ?? null,
+      id,
+    ]);
+
+    return res.json({ updated: true, id: Number(id) });
+  } catch (e) {
+    console.error('PUT /api/prices/:id error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
 
 module.exports = router;
