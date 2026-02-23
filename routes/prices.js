@@ -11,6 +11,12 @@ const router = express.Router();
  * Optional query params: itemID, shopID, channel, from, to, limit, offset
  * Returns: { count, rows: [...] }
  */
+
+
+router.put('/:id', async (req, res) => {
+   // update normalPrice, discountPrice, discountCond
+});
+
 router.get('/', async (req, res) => {
   try {
     const {
