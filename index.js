@@ -1154,6 +1154,17 @@ app.put('/api/prices/:id', async (req, res) => {
 });
 
 
+// GET /api/chain-shop
+app.get('/api/chain-shop', async (_req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM chainShop ORDER BY shopName ASC');
+    res.json({ shops: rows });
+  } catch (e) {
+    console.error('GET /api/chain-shop error:', e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
 
 // FINAL — Correct for your MySQL table EXACTLY as shown
 app.post('/api/item-input', async (req, res) => {
