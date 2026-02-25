@@ -9,6 +9,10 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '512kb' }));
 
+// app or top-level router file (ESM)
+import phoneFullRouter from './routes/phone-full.js';
+app.use('/phone', phoneFullRouter);
+
 // Request logger (dev only)
 app.use((req, res, next) => {
   if (process.env.NODE_ENV !== 'production') {
