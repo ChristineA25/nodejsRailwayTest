@@ -1368,58 +1368,94 @@ function limitConcurrency(items, limit, worker) {
   });
 }
 
-// ----- Route: GET /time/regions (drop-in) ------------------------------------
+
 app.get('/time/regions', async (_req, res) => {
   try {
+    const now = Date.now();
+
+    // 1) Serve from cache if still fresh (instant response)
+    if (Array.isArray(timeRegionsCache.data) &&
+        timeRegionsCache.data.length > 0 &&
+        (now - timeRegionsCache.at) < CACHE_TTL_MS) {
+      return res.json({ regions: timeRegionsCache.data });
+    }
+
+    // 2) Build fast response from DB offsets only (no external fetches)
     const [rows] = await pool.query(`
-      SELECT
-        countryFlag   AS iso2,
-        regionName    AS name,
-        timezoneURL   AS tzUrl,
+      SELECT 
+        countryFlag AS iso2,
+        regionName  AS name,
+        timezoneURL AS tzUrl,
         offsetHrsVSutc AS dbOffset
       FROM phoneInfo
       WHERE countryFlag IS NOT NULL AND countryFlag <> ''
       ORDER BY name ASC
     `);
 
-    const items = rows.map(r => ({
-      iso2: String(r.iso2 ?? '').toUpperCase().trim(),
-      name: String(r.name ?? '').trim(),
-      tzUrl: (r.tzUrl ?? '').toString().trim(),
-      dbOffset: Number(r.dbOffset ?? 0),
-    }));
-
-    const out = await limitConcurrency(items, 6, async (it) => {
-      // 1) Try timezoneURL
-      let offset = null;
-      let source = 'db';
-      if (it.tzUrl) {
-        try {
-          const j = await fetchJsonWithTimeout(it.tzUrl, 1500);
-          const n = parseOffsetFromJson(j);
-          if (n != null && Number.isFinite(n)) {
-            offset = n;
-            source = 'url';
-          }
-        } catch (_) {
-          // swallow and fall back
-        }
-      }
-      // 2) Fallback to DB numeric offset
-      if (offset == null || !Number.isFinite(offset)) {
-        offset = Number(it.dbOffset ?? 0);
-        source = 'db';
-      }
+    const regionsFromDb = rows.map(r => {
+      const iso2 = String(r.iso2 ?? '').toUpperCase().trim();
+      const name = String(r.name ?? '').trim();
+      const offset = Number(r.dbOffset ?? 0);
       return {
-        iso2: it.iso2,
-        name: it.name,
+        iso2,
+        name,
         offsetHours: offset,
         offsetLabel: formatUtcLabel(offset),
-        source,
+        source: 'db'
       };
     });
 
-    return res.json({ regions: out });
+    // Update cache and respond immediately
+    timeRegionsCache.at = now;
+    timeRegionsCache.data = regionsFromDb;
+    res.json({ regions: regionsFromDb });
+
+    // 3) Background refinement: try timezoneURL for better offsets (non-blocking)
+    (async () => {
+      try {
+        // Use the tzUrl from the same query to avoid a second DB trip
+        const items = rows.map(r => ({
+          iso2: String(r.iso2 ?? '').toUpperCase().trim(),
+          name: String(r.name ?? '').trim(),
+          tzUrl: (r.tzUrl ?? '').toString().trim(),
+          dbOffset: Number(r.dbOffset ?? 0),
+        }));
+
+        const refined = await limitConcurrency(items, 6, async (it) => {
+          // Start from DB value; only switch if URL returns a valid number
+          let offset = Number(it.dbOffset ?? 0);
+          let source = 'db';
+
+          if (it.tzUrl) {
+            try {
+              const j = await fetchJsonWithTimeout(it.tzUrl, 1200); // a bit shorter than request timeouts
+              const n = parseOffsetFromJson(j);
+              if (Number.isFinite(n)) {
+                offset = n;
+                source = 'url';
+              }
+            } catch {
+              // Ignore per‑country failures; we keep DB fallback
+            }
+          }
+
+          return {
+            iso2: it.iso2,
+            name: it.name,
+            offsetHours: offset,
+            offsetLabel: formatUtcLabel(offset),
+            source,
+          };
+        });
+
+        // Atomically update cache after refinement finishes
+        timeRegionsCache.at = Date.now();
+        timeRegionsCache.data = refined;
+      } catch (bgErr) {
+        console.error('Background refresh of /time/regions failed:', bgErr);
+        // Keep serving cached DB values; no throw so it never breaks the request
+      }
+    })();
   } catch (e) {
     console.error('Error in /time/regions:', e);
     return res.status(500).json({ error: 'Failed to load time regions' });
