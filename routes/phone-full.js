@@ -68,7 +68,9 @@ router.get('/regions/raw', async (_req, res) => {
  * GET /phone/regions/with-sites
  * For each record, fetch timezoneURL (if present) and return status + finalURL + preview.
  */
-router.get('/regions/with-sites', async (_req, res) => {
+
+// routes/phone-full.js (ESM) — improved /with-sites
+router.get('/regions/with-sites', async (req, res) => {
   try {
     const [rows] = await pool.query(`
       SELECT
@@ -85,57 +87,80 @@ router.get('/regions/with-sites', async (_req, res) => {
       ORDER BY regionName ASC
     `);
 
-    // Limit parallelism to avoid hammering external sites
-    const limit = 8;
-    let i = 0;
+    // --- Config (with safe defaults) ---
+    const timeoutMs   = Math.max(1000, Math.min(parseInt(req.query.timeoutMs ?? '12000', 10), 60000)); // default 12s
+    const concurrency = Math.max(1,     Math.min(parseInt(req.query.concurrency ?? '6', 10), 16));     // default 6
+    const overallMs   = Math.max(timeoutMs, Math.min(parseInt(req.query.overallMs ?? '60000', 10), 180000)); // default 60s
 
+    // --- Global deadline so the endpoint never hangs forever ---
+    const parent = new AbortController();
+    const overallTimer = setTimeout(() => parent.abort(), overallMs);
+
+    // Per-site fetch with its own timer, tied to the parent controller
     async function fetchOne(url) {
       if (!url) return { ok: false, error: 'no_url' };
+      const ctl = new AbortController();
+
+      // If parent aborts, abort child too
+      const onAbort = () => ctl.abort();
+      parent.signal.addEventListener('abort', onAbort, { once: true });
+
+      const perTimer = setTimeout(() => ctl.abort(), timeoutMs);
       try {
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), 6000);
-        const resp = await fetch(url, { redirect: 'follow', signal: controller.signal });
-        clearTimeout(t);
-
-        // Small preview to keep payload reasonable
+        const resp = await fetch(url, { redirect: 'follow', signal: ctl.signal });
         const text = await resp.text();
-        const preview = text.slice(0, 200);
-
         return {
           ok: true,
           status: resp.status,
           finalURL: resp.url,
-          preview
+          preview: text.slice(0, 200),
+          timeMs: undefined // add timing if you want (see previous message)
         };
       } catch (err) {
-        return { ok: false, error: String(err.message || err) };
+        const isAbort = err && (err.name === 'AbortError' || /aborted/i.test(String(err.message)));
+        return { ok: false, error: isAbort ? 'timeout' : String(err.message || err) };
+      } finally {
+        clearTimeout(perTimer);
+        parent.signal.removeEventListener('abort', onAbort);
       }
     }
 
-    async function* chunked(arr, n) {
-      for (let k = 0; k < arr.length; k += n) {
-        yield arr.slice(k, k + n);
-      }
+    // Simple concurrency limiter
+    async function mapLimited(items, limit, fn) {
+      const out = new Array(items.length);
+      let next = 0;
+      const workers = Array.from({ length: limit }, async () => {
+        while (true) {
+          const i = next++;
+          if (i >= items.length) break;
+          out[i] = await fn(items[i], i);
+        }
+      });
+      await Promise.race([Promise.all(workers), new Promise((_, rej) => {
+        parent.signal.addEventListener('abort', () => rej(new Error('overall-timeout')), { once: true });
+      })]);
+      return out;
     }
 
-    const enriched = [];
-    for await (const chunk of chunked(rows, limit)) {
-      const results = await Promise.all(
-        chunk.map(r => fetchOne(r.timezoneURL))
-      );
-      for (let j = 0; j < chunk.length; j++) {
-        const r = chunk[j];
-        const site = results[j];
-        enriched.push({
-          ...r,
-          website: site
-        });
-      }
+    let enriched, partial = false;
+    try {
+      enriched = await mapLimited(rows, concurrency, async (r) => {
+        const site = await fetchOne(r.timezoneURL);
+        return { ...r, website: site };
+      });
+    } catch (e) {
+      // overall timeout fired: return whatever we have so far
+      partial = true;
+      // Fill the remainder if needed
+      enriched = (enriched ?? []).concat(rows.slice((enriched?.length ?? 0)).map((r) => ({
+        ...r, website: { ok: false, error: 'timeout' }
+      })));
+    } finally {
+      clearTimeout(overallTimer);
     }
 
-    // Optional ETag for the enriched payload (exclude volatile site previews if you prefer)
-    res.set('Cache-Control', 'no-store'); // site response changes frequently; disable caching by default
-    return res.json({ count: enriched.length, rows: enriched });
+    res.set('Cache-Control', 'no-store');
+    return res.json({ count: enriched.length, partial, rows: enriched });
   } catch (e) {
     console.error('GET /phone/regions/with-sites error:', e);
     return res.status(500).json({ error: 'server_error' });
