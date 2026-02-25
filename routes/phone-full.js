@@ -93,7 +93,7 @@ router.get('/regions/with-sites', async (_req, res) => {
       if (!url) return { ok: false, error: 'no_url' };
       try {
         const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), 20000);
+        const t = setTimeout(() => controller.abort(), 7000);
         const resp = await fetch(url, { redirect: 'follow', signal: controller.signal });
         clearTimeout(t);
 
