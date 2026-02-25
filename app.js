@@ -26,6 +26,16 @@ app.use('/api/items', itemsRouter);
 
 app.use('/api/prices', require('./routes/prices'));
 
+
+// app.js or server.js (CommonJS)
+const phoneFullRouter = require('./routes/phone-full');
+app.use('/phone', phoneFullRouter);
+
+
+// app or top-level router file (ESM)
+import phoneFullRouter from './routes/phone-full.js';
+app.use('/phone', phoneFullRouter);
+
 /* ------------------------------------------------------------------ */
 /*                          Key Management                             */
 /* ------------------------------------------------------------------ */
