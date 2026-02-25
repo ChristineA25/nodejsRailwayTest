@@ -1278,6 +1278,154 @@ app.post('/api/item-input', async (req, res) => {
 });
 
 
+// ----- Helpers: parse & format UTC offsets (drop-in) -------------------------
+function formatUtcLabel(offsetHours) {
+  // offsetHours can be fractional: 5.5 -> "+05:30", -3.75 -> "-03:45"
+  const sign = offsetHours >= 0 ? '+' : '-';
+  const abs = Math.abs(offsetHours);
+  const hh = Math.floor(abs);
+  const mm = Math.round((abs - hh) * 60);
+  const HH = String(hh).padStart(2, '0');
+  const MM = String(mm).padStart(2, '0');
+  return `UTC${sign}${HH}:${MM}`;
+}
+function coerceNumber(x) {
+  if (x == null) return null;
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+function parseOffsetFromJson(j) {
+  // Try several common shapes:
+  //  - hours as number: offsetHours / utcOffsetHours / gmtOffsetHours
+  //  - seconds: rawOffsetSeconds / rawOffset  (then /3600)
+  //  - "+0530" or "+05:30" or "UTC+05:30": utc_offset / utcOffset
+  if (!j || typeof j !== 'object') return null;
+
+  const asNum =
+    coerceNumber(j.offsetHours) ??
+    coerceNumber(j.utcOffsetHours) ??
+    coerceNumber(j.gmtOffsetHours);
+  if (asNum != null) return asNum;
+
+  const secs =
+    coerceNumber(j.rawOffsetSeconds) ??
+    coerceNumber(j.raw_offset_seconds) ??
+    coerceNumber(j.rawOffset);
+  if (secs != null) return secs / 3600;
+
+  const s =
+    (j.utc_offset ?? j.utcOffset ?? j.gmtOffset ?? j.offset ?? '').toString();
+  if (s) {
+    // Accept "UTC+05:30", "+0530", "+05:30"
+    const m = s.replace(/^UTC/i, '').trim().match(/^([+-])(\d{1,2}):?(\d{2})?$/);
+    if (m) {
+      const sign = m[1] === '-' ? -1 : 1;
+      const h = Number(m[2] ?? '0');
+      const mm = Number(m[3] ?? '0');
+      if (Number.isFinite(h) && Number.isFinite(mm)) {
+        return sign * (h + mm / 60);
+      }
+    }
+  }
+  return null;
+}
+
+async function fetchJsonWithTimeout(url, ms = 1500) {
+  const ac = new AbortController();
+  const id = setTimeout(() => ac.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: ac.signal });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('json')) {
+      // Try to parse anyway; some endpoints mislabel JSON
+      return await r.json().catch(() => null);
+    }
+    return await r.json();
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+function limitConcurrency(items, limit, worker) {
+  // Tiny async pool
+  let i = 0;
+  const results = new Array(items.length);
+  return new Promise((resolve) => {
+    let running = 0;
+    function next() {
+      if (i >= items.length && running === 0) return resolve(results);
+      while (running < limit && i < items.length) {
+        const idx = i++, it = items[idx];
+        running++;
+        Promise.resolve(worker(it, idx))
+          .then((val) => { results[idx] = val; })
+          .catch(() => { results[idx] = null; })
+          .finally(() => { running--; next(); });
+      }
+    }
+    next();
+  });
+}
+
+// ----- Route: GET /time/regions (drop-in) ------------------------------------
+app.get('/time/regions', async (_req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        countryFlag   AS iso2,
+        regionName    AS name,
+        timezoneURL   AS tzUrl,
+        offsetHrsVSutc AS dbOffset
+      FROM phoneInfo
+      WHERE countryFlag IS NOT NULL AND countryFlag <> ''
+      ORDER BY name ASC
+    `);
+
+    const items = rows.map(r => ({
+      iso2: String(r.iso2 ?? '').toUpperCase().trim(),
+      name: String(r.name ?? '').trim(),
+      tzUrl: (r.tzUrl ?? '').toString().trim(),
+      dbOffset: Number(r.dbOffset ?? 0),
+    }));
+
+    const out = await limitConcurrency(items, 6, async (it) => {
+      // 1) Try timezoneURL
+      let offset = null;
+      let source = 'db';
+      if (it.tzUrl) {
+        try {
+          const j = await fetchJsonWithTimeout(it.tzUrl, 1500);
+          const n = parseOffsetFromJson(j);
+          if (n != null && Number.isFinite(n)) {
+            offset = n;
+            source = 'url';
+          }
+        } catch (_) {
+          // swallow and fall back
+        }
+      }
+      // 2) Fallback to DB numeric offset
+      if (offset == null || !Number.isFinite(offset)) {
+        offset = Number(it.dbOffset ?? 0);
+        source = 'db';
+      }
+      return {
+        iso2: it.iso2,
+        name: it.name,
+        offsetHours: offset,
+        offsetLabel: formatUtcLabel(offset),
+        source,
+      };
+    });
+
+    return res.json({ regions: out });
+  } catch (e) {
+    console.error('Error in /time/regions:', e);
+    return res.status(500).json({ error: 'Failed to load time regions' });
+  }
+});
+
 // ------------------------------ Start server --------------------------------
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Server running on port ${port}`));
