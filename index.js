@@ -13,6 +13,8 @@ app.use(express.json({ limit: '512kb' }));
 import phoneFullRouter from './routes/phone-full.js';
 app.use('/phone', phoneFullRouter);
 
+app.use(allItemsRouter); // mounts /api/items/all
+
 // Request logger (dev only)
 app.use((req, res, next) => {
   if (process.env.NODE_ENV !== 'production') {
