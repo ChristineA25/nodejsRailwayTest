@@ -1,15 +1,16 @@
 
-// routes/itemInput.mjs (ESM)
+// routes/itemInput.mjs
 import { Router } from 'express';
 import { pool } from '../db.js';
 
 const router = Router();
 
-
-router.get('/', (req, res) => {
+// Health check
+router.get('/health', (req, res) => {
   res.status(200).json({ ok: true, service: 'item-input', message: 'alive' });
 });
 
+// GET /api/item-input
 router.get('/', async (req, res) => {
   try {
     const {
@@ -20,14 +21,14 @@ router.get('/', async (req, res) => {
     const where = [];
     const params = [];
 
-    if (userID)     { where.push('`userID` = ?');       params.push(String(userID)); }
-    if (brand)      { where.push('`brand` = ?');        params.push(String(brand)); }
-    if (itemName)   { where.push('`itemName` = ?');     params.push(String(itemName)); }
-    if (itemID)     { where.push('`itemID` = ?');       params.push(String(itemID)); }
-    if (chainShopID){ where.push('`chainShopID` = ?');  params.push(String(chainShopID)); }
-    if (channel)    { where.push('LOWER(`channel`) = ?'); params.push(String(channel).toLowerCase()); }
-    if (from)       { where.push('`createdAt` >= ?');   params.push(String(from)); }
-    if (to)         { where.push('`createdAt` <= ?');   params.push(String(to)); }
+    if (userID)      { where.push('`userID` = ?');       params.push(String(userID)); }
+    if (brand)       { where.push('`brand` = ?');        params.push(String(brand)); }
+    if (itemName)    { where.push('`itemName` = ?');     params.push(String(itemName)); } // or LIKE if you prefer
+    if (itemID)      { where.push('`itemID` = ?');       params.push(String(itemID)); }
+    if (chainShopID) { where.push('`chainShopID` = ?');  params.push(String(chainShopID)); }
+    if (channel)     { where.push('LOWER(`channel`) = ?'); params.push(String(channel).toLowerCase()); }
+    if (from)        { where.push('`createdAt` >= ?');   params.push(String(from)); }
+    if (to)          { where.push('`createdAt` <= ?');   params.push(String(to)); }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const lim = Math.max(1, Math.min(parseInt(limit, 10) || 200, 1000));
@@ -44,6 +45,7 @@ router.get('/', async (req, res) => {
       LIMIT ? OFFSET ?
     `;
     const finalParams = [...params, lim, off];
+
     const [rows] = await pool.query(sql, finalParams);
 
     const data = rows.map(r => ({
@@ -65,11 +67,12 @@ router.get('/', async (req, res) => {
       createdAt:       r.createdAt ? String(r.createdAt) : null,
     }));
 
-    return res.json({ count: data.length, rows: data });
+    res.json({ count: data.length, rows: data });
   } catch (e) {
     console.error('GET /api/item-input error:', e);
-    return res.status(500).json({ error: 'server_error' });
+    res.status(500).json({ error: 'server_error' });
   }
 });
 
 export default router;
+``
