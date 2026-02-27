@@ -12,6 +12,7 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { pool } = require('./db');
+import itemInputRouter from './routes/itemInput.mjs';
 
 const app = express();
 app.use(express.json({ limit: '10kb' }));
@@ -34,6 +35,7 @@ app.use('/phone', phoneFullRouter);
 
 import itemInputRouter from './routes/itemInput.mjs';
 app.use('/api/item-input', itemInputRouter);
+app.use('/item-input', itemInputRouter);
 
 // app or top-level router file (ESM)
 import phoneFullRouter from './routes/phone-full.js';
