@@ -32,6 +32,8 @@ app.use('/api/item-input', require('./routes/itemInput'));
 const phoneFullRouter = require('./routes/phone-full');
 app.use('/phone', phoneFullRouter);
 
+import itemInputRouter from './routes/itemInput.mjs';
+app.use('/api/item-input', itemInputRouter);
 
 // app or top-level router file (ESM)
 import phoneFullRouter from './routes/phone-full.js';
