@@ -13,7 +13,7 @@ app.use(express.json({ limit: '512kb' }));
 import phoneFullRouter from './routes/phone-full.js';
 app.use('/phone', phoneFullRouter);
 
-import allItemsRouter from '/routes/items-all.esm.js';
+import allItemsRouter from './routes/items-all.esm.js';
 app.use('/api/items/all', allItemsRouter); // mounts /api/items/all
 
 // Request logger (dev only)
