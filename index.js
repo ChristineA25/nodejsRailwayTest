@@ -14,7 +14,7 @@ import phoneFullRouter from './routes/phone-full.js';
 app.use('/phone', phoneFullRouter);
 
 import allItemsRouter from '/routes/items-all.esm.js';
-app.use(, allItemsRouter); // mounts /api/items/all
+app.use('/api/items/all', allItemsRouter); // mounts /api/items/all
 
 // Request logger (dev only)
 app.use((req, res, next) => {
