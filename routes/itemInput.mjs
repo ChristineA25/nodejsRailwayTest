@@ -1,9 +1,14 @@
 
 // routes/itemInput.mjs (ESM)
-import express from 'express';
+import { Router } from 'express';
 import { pool } from '../db.js';
 
-const router = express.Router();
+const router = Router();
+
+
+router.get('/', (req, res) => {
+  res.status(200).json({ ok: true, service: 'item-input', message: 'alive' });
+});
 
 router.get('/', async (req, res) => {
   try {
