@@ -26,6 +26,7 @@ app.use('/api/items', itemsRouter);
 
 app.use('/api/prices', require('./routes/prices'));
 
+app.use('/api/item-input', require('./routes/itemInput'));
 
 // app.js or server.js (CommonJS)
 const phoneFullRouter = require('./routes/phone-full');
