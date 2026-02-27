@@ -183,6 +183,16 @@ app.post('/api/items/resolve', async (req, res) => {
   }
 });
 
+
+// C1: add near other imports
+import itemInputRouter from './routes/itemInput.mjs';
+
+// C2: add near other app.use(...) mounts (after app is created)
+app.use('/api/item-input', itemInputRouter);
+
+// (optional) also expose a shorter path:
+app.use('/item-input', itemInputRouter);
+
 // -------------------------- ITEMS (search page) ------------------------------
 // GET /api/items/search?q=&field=all|name|brand|quantity|feature|productcolor&limit=50
 // Reads only from `item` table (id, name, brand, quantity, feature, productColor, picWebsite).
