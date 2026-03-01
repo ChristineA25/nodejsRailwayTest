@@ -117,4 +117,39 @@ router.get('/regions/with-sites', async (_req, res) => {
   }
 });
 
+
+// --- BEGIN DROP-IN: expose ALL rows from itemColor4 -------------------------
+
+// GET /phone/item-color4/all
+// Returns every row from `itemColor4` with all columns.
+router.get('/item-color4/all', async (_req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        \`item\`,
+        \`color\`,
+        \`category\`,
+        \`note\`
+      FROM \`itemColor4\`
+      ORDER BY \`item\` ASC
+    `);
+
+    const data = rows.map(r => ({
+      item: (r.item ?? '').toString().trim(),
+      color: (r.color ?? '').toString().trim(),      // CSV string preserved
+      category: (r.category ?? '').toString().trim(),
+      note: (r.note ?? '').toString().trim(),
+    }));
+
+    res.set('Cache-Control', 'no-store'); // mirrors other read endpoints here
+    return res.json({ count: data.length, rows: data });
+  } catch (e) {
+    console.error('GET /phone/item-color4/all error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// --- END DROP-IN ------------------------------------------------------------
+
+
 module.exports = router;
