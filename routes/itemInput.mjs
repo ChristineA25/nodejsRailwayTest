@@ -80,5 +80,55 @@ const returnAll = req.get('x-all') === '1';
   }
 });
 
+
+// --- BEGIN DROP-IN: expose ALL rows from itemColor4 -------------------------
+
+// GET /api/item-input/item-color4/all
+// Returns every row from `itemColor4` with all columns: item, color, category, note.
+router.get('/item-color4/all', async (_req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        \`item\`,
+        \`color\`,
+        \`category\`,
+        \`note\`
+      FROM \`itemColor4\`
+      ORDER BY \`item\` ASC
+    `);
+    // Normalize to predictable strings (null-safe) and split colors if you want arrays
+    const data = rows.map(r => ({
+      item: (r.item ?? '').toString().trim(),
+      color: (r.color ?? '').toString().trim(),      // keep CSV as-is; client can split
+      category: (r.category ?? '').toString().trim(),
+      note: (r.note ?? '').toString().trim(),
+    }));
+    return res.json({ count: data.length, rows: data });
+  } catch (e) {
+    console.error('GET /item-color4/all error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// (Optional) GET /api/item-input/item-color4/items
+// Returns distinct items only (useful for dropdowns / quick lookups).
+router.get('/item-color4/items', async (_req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT DISTINCT \`item\` AS name
+      FROM \`itemColor4\`
+      WHERE \`item\` IS NOT NULL AND \`item\` <> ''
+      ORDER BY \`item\` ASC
+    `);
+    const items = rows.map(r => (r.name ?? '').toString().trim()).filter(Boolean);
+    return res.json({ count: items.length, items });
+  } catch (e) {
+    console.error('GET /item-color4/items error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// --- END DROP-IN ------------------------------------------------------------
+
+
 export default router;
-``
