@@ -18,6 +18,10 @@ router.get('/', async (req, res) => {
       from, to, limit = '200', offset = '0',
     } = req.query;
 
+
+// Allow clients to request "all" rows without changing the URL (via header)
+const returnAll = req.get('x-all') === '1';
+
     const where = [];
     const params = [];
 
@@ -31,10 +35,11 @@ router.get('/', async (req, res) => {
     if (to)          { where.push('`createdAt` <= ?');   params.push(String(to)); }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    
     const lim = Math.max(1, Math.min(parseInt(limit, 10) || 200, 1000));
     const off = Math.max(0, parseInt(offset, 10) || 0);
 
-    const sql = `
+    const baseSql = `
       SELECT
         id, userID, brand, itemName, itemNo, itemID, feature, quantity,
         priceValue, priceID, discountApplied, channel,
@@ -42,9 +47,10 @@ router.get('/', async (req, res) => {
       FROM itemInput
       ${whereSql}
       ORDER BY createdAt DESC, id DESC
-      LIMIT ? OFFSET ?
     `;
-    const finalParams = [...params, lim, off];
+    
+    const sql = returnAll ? baseSql : `${baseSql}\nLIMIT ? OFFSET ?`;
+    const finalParams = returnAll ? params : [...params, lim, off];
 
     const [rows] = await pool.query(sql, finalParams);
 
