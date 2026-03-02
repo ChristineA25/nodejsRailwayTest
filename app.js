@@ -41,6 +41,9 @@ app.use('/item-input', itemInputRouter);
 import phoneFullRouter from './routes/phone-full.js';
 app.use('/phone', phoneFullRouter);
 
+import itemInputAnalyticsRouter from './routes/itemInput-analytics.mjs';
+app.use('/api/item-input/analytics', itemInputAnalyticsRouter);
+
 /* ------------------------------------------------------------------ */
 /*                          Key Management                             */
 /* ------------------------------------------------------------------ */
