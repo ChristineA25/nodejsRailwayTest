@@ -16,6 +16,11 @@ app.use('/phone', phoneFullRouter);
 import allItemsRouter from './routes/items-all.esm.js';
 app.use(allItemsRouter); // mounts /api/items/all
 
+
+// index.js (ESM) – ensure this is the file Railway runs
+import itemInputAnalyticsRouter from './routes/itemInput-analytics.mjs';
+app.use('/api/item-input/analytics', itemInputAnalyticsRouter);
+
 // Request logger (dev only)
 app.use((req, res, next) => {
   if (process.env.NODE_ENV !== 'production') {
