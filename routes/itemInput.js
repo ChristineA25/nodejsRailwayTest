@@ -99,4 +99,40 @@ router.get('/', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/item-input/by-brand
+ * Query params: userID (required)
+ * Logic: SELECT itemName, brand, priceValue, createdAt FROM itemInput WHERE userID = ? ORDER BY brand ASC
+ */
+router.get('/by-brand', async (req, res) => {
+  try {
+    const { userID } = req.query;
+
+    if (!userID) {
+      return res.status(400).json({ error: 'userID_required' });
+    }
+
+    const sql = `
+      SELECT itemName, brand, priceValue, createdAt
+      FROM itemInput
+      WHERE userID = ?
+      ORDER BY brand ASC
+    `;
+
+    const [rows] = await pool.query(sql, [String(userID)]);
+
+    const data = rows.map(r => ({
+      itemName:   r.itemName ?? null,
+      brand:      r.brand ?? null,
+      priceValue: r.priceValue == null ? null : Number(r.priceValue),
+      createdAt:  r.createdAt ? String(r.createdAt) : null
+    }));
+
+    return res.json({ count: data.length, rows: data });
+  } catch (e) {
+    console.error('GET /api/item-input/by-brand error:', e);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
 module.exports = router;
