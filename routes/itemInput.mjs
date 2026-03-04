@@ -249,10 +249,7 @@ router.get('/item-color4/items', async (_req, res) => {
   }
 });
 
-/**
- * GET /api/item-input/by-brand
- * Returns itemName, brand, priceValue, and createdAt for a specific user, sorted by brand.
- */
+
 router.get('/by-brand', async (req, res) => {
   try {
     const { userID } = req.query;
@@ -271,6 +268,7 @@ router.get('/by-brand', async (req, res) => {
         itemName: r.itemName ?? null,
         brand: r.brand ?? null,
         priceValue: r.priceValue != null ? Number(r.priceValue) : null,
+        itemNo: r.itemNo != null ? Number(r.itemNo) : null, // <— added
         createdAt: r.createdAt ? String(r.createdAt) : null
       }))
     });
@@ -279,6 +277,7 @@ router.get('/by-brand', async (req, res) => {
     res.status(500).json({ error: 'server_error' });
   }
 });
+
 
 /* -------------------------------------------------------------------------- */
 /* --- END DROP-IN ---------------------------------------------------------- */
