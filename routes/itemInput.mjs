@@ -250,13 +250,19 @@ router.get('/item-color4/items', async (_req, res) => {
 });
 
 
+
 router.get('/by-brand', async (req, res) => {
   try {
     const { userID } = req.query;
     if (!userID) return res.status(400).json({ error: 'userID_required' });
 
     const [rows] = await pool.query(`
-      SELECT itemName, brand, priceValue, itemNo, createdAt
+      SELECT 
+        itemName,
+        brand,
+        priceValue,
+        itemNo,         -- or item_no AS itemNo (see note below)
+        createdAt
       FROM itemInput
       WHERE userID = ?
       ORDER BY brand ASC
@@ -268,7 +274,8 @@ router.get('/by-brand', async (req, res) => {
         itemName: r.itemName ?? null,
         brand: r.brand ?? null,
         priceValue: r.priceValue != null ? Number(r.priceValue) : null,
-        itemNo: r.itemNo != null ? Number(r.itemNo) : null, // <— added
+        // Return as the raw value (string or number)
+        itemNo: r.itemNo ?? null,
         createdAt: r.createdAt ? String(r.createdAt) : null
       }))
     });
@@ -277,6 +284,7 @@ router.get('/by-brand', async (req, res) => {
     res.status(500).json({ error: 'server_error' });
   }
 });
+
 
 
 /* -------------------------------------------------------------------------- */
