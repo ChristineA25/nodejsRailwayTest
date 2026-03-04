@@ -249,6 +249,37 @@ router.get('/item-color4/items', async (_req, res) => {
   }
 });
 
+/**
+ * GET /api/item-input/by-brand
+ * Returns itemName, brand, priceValue, and createdAt for a specific user, sorted by brand.
+ */
+router.get('/by-brand', async (req, res) => {
+  try {
+    const { userID } = req.query;
+    if (!userID) return res.status(400).json({ error: 'userID_required' });
+
+    const [rows] = await pool.query(`
+      SELECT itemName, brand, priceValue, createdAt
+      FROM itemInput
+      WHERE userID = ?
+      ORDER BY brand ASC
+    `, [String(userID)]);
+
+    res.json({
+      count: rows.length,
+      rows: rows.map(r => ({
+        itemName: r.itemName ?? null,
+        brand: r.brand ?? null,
+        priceValue: r.priceValue != null ? Number(r.priceValue) : null,
+        createdAt: r.createdAt ? String(r.createdAt) : null
+      }))
+    });
+  } catch (e) {
+    console.error('GET /by-brand error:', e);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
 /* -------------------------------------------------------------------------- */
 /* --- END DROP-IN ---------------------------------------------------------- */
 /* -------------------------------------------------------------------------- */
