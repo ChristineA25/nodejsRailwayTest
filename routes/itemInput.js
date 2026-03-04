@@ -113,7 +113,7 @@ router.get('/by-brand', async (req, res) => {
     }
 
     const sql = `
-      SELECT itemName, brand, priceValue, createdAt
+      SELECT itemName, brand, priceValue, createdAt, itemNo
       FROM itemInput
       WHERE userID = ?
       ORDER BY brand ASC
