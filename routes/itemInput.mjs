@@ -259,7 +259,7 @@ router.get('/by-brand', async (req, res) => {
     if (!userID) return res.status(400).json({ error: 'userID_required' });
 
     const [rows] = await pool.query(`
-      SELECT itemName, brand, priceValue, createdAt
+      SELECT itemName, brand, priceValue, itemNo, createdAt
       FROM itemInput
       WHERE userID = ?
       ORDER BY brand ASC
